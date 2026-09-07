@@ -1,0 +1,1217 @@
+"use server";
+
+import { cookies, headers } from "next/headers";
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import fs from "fs";
+import path from "path";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { after } from "next/server";
+import { UAParser } from "ua-parser-js";
+import { sb } from "@/lib/supabase";
+import { STATIC_BANKS, Bank } from "@/lib/banks";
+import { SESSION_COOKIE, signSession } from "@/lib/auth";
+import { getCurrentUser, hashPassword, verifyPassword, SessionUser } from "@/lib/auth-server";
+import { House, MonthlyRow, Room, ComputedRow } from "@/lib/types";
+import { prevKy, nextKy, computeRows, pricesToMap, applyRoomSync, displayKy, fmt, computeRow, vietQrLocalUrl, fmtDateVi, utilNote } from "@/lib/calc";
+
+async function logAudit(houseId: number, entries: { ky?: string; room?: string; field: string; old_val: string; new_val: string }[]) {
+  const rows = entries.filter((e) => e.old_val !== e.new_val).map((e) => ({ house_id: houseId, ...e }));
+  if (rows.length === 0) return;
+  await sb.from("nhatro_audit_log").insert(rows);
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const ha = createHash("sha256").update(a).digest();
+  const hb = createHash("sha256").update(b).digest();
+  return timingSafeEqual(ha, hb);
+}
+
+const NOTIFY_EMAIL = process.env.ADMIN_NOTIFY_EMAIL || "info@legaleader.com";
+
+function ipFromHeaders(hs: Headers): string {
+  const fwd = hs.get("x-forwarded-for");
+  return fwd?.split(",")[0]?.trim() || hs.get("x-real-ip") || "unknown";
+}
+
+function isPrivateIp(ip: string): boolean {
+  if (!ip || ip === "unknown" || ip === "localhost" || ip === "::1" || ip.startsWith("fc") || ip.startsWith("fd")) return true;
+  return /^(10\.|127\.|0\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.)/.test(ip);
+}
+
+async function ipLocation(ip: string): Promise<string> {
+  if (isPrivateIp(ip)) return "";
+  try {
+    const r = await fetch(`https://ip-api.com/json/${ip}?fields=status,country,regionName,city,isp`, {
+      signal: AbortSignal.timeout(4000),
+    });
+    const j = (await r.json()) as { status?: string; country?: string; regionName?: string; city?: string };
+    if (r.ok && j.status === "success") return [j.city, j.regionName, j.country].filter(Boolean).join(", ");
+  } catch {
+    /* noop */
+  }
+  return "";
+}
+
+function describeDevice(ua: string | null): string {
+  if (!ua) return "Trình duyệt không xác định";
+  const p = new UAParser(ua).getResult();
+  const browser = p.browser?.name ? `${p.browser.name}${p.browser.version ? " " + p.browser.version : ""}` : "Trình duyệt không xác định";
+  const os = p.os?.name ? `${p.os.name}${p.os.version ? " " + p.os.version : ""}` : "";
+  const dev = p.device?.model || "";
+  return [browser, os, dev].filter(Boolean).join(" · ");
+}
+
+function viNow(d: Date = new Date()): string {
+  return d.toLocaleString("vi-VN", { hour12: false, timeZone: "Asia/Ho_Chi_Minh" });
+}
+
+async function sendNotify(subject: string, html: string) {
+  const key = process.env.RESEND_API_KEY;
+  const from = process.env.MAIL_FROM;
+  if (!key || !from) return;
+  try {
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from, to: [NOTIFY_EMAIL], subject, html }),
+    });
+  } catch {
+    /* noop */
+  }
+}
+
+function notifyFrame(title: string, bodyHtml: string): string {
+  return `<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#f1f5f9;font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;color:#0f172a">
+<div style="max-width:520px;margin:24px auto;background:#ffffff;border-radius:14px;border:1px solid #e2e8f0;overflow:hidden">
+  <div style="background:#1e293b;color:#ffffff;padding:16px 22px;font-size:15px;font-weight:600">${esc(title)}</div>
+  <div style="padding:20px 24px;font-size:14px;line-height:1.75">${bodyHtml}</div>
+  <div style="padding:12px 24px;font-size:11px;color:#94a3b8;border-top:1px solid #f1f5f9;text-align:center">Legaleader · Quản lý nhà trọ</div>
+</div></body></html>`;
+}
+
+export async function login(email: string, password: string): Promise<{ ok: boolean; error?: string }> {
+  const hs = await headers();
+  const ip = hs.get("x-forwarded-for")?.split(",")[0]?.trim() || hs.get("x-real-ip") || "unknown";
+
+  const now = Date.now();
+  const winMs = 15 * 60 * 1000;
+  const { data: rec } = await sb.from("nhatro_login_attempts").select("*").eq("ip", ip).maybeSingle() as unknown as { data: { attempts?: number; window_start?: string; blocked_until?: string | null } | null };
+
+  const blockedUntil = rec?.blocked_until ? new Date(rec.blocked_until).getTime() : 0;
+  if (blockedUntil > now) {
+    const mins = Math.ceil((blockedUntil - now) / 60000);
+    return { ok: false, error: `Quá nhiều lần nhập sai. Thử lại sau ${mins} phút.` };
+  }
+
+  if (email && password) {
+    const { data: user } = await sb.from("nhatro_users").select("*").eq("email", email.trim().toLowerCase()).maybeSingle();
+    const ok = !!user && verifyPassword(password, (user as { password_hash: string }).password_hash);
+    if (ok) {
+      await sb.from("nhatro_login_attempts").delete().eq("ip", ip);
+      const uid = (user as { id: number }).id;
+      const token = await signSession(uid);
+      const store = await cookies();
+      store.set(SESSION_COOKIE, token, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "lax",
+        path: "/",
+        maxAge: 60 * 60 * 24 * 30,
+      });
+      const dev = describeDevice(hs.get("user-agent"));
+      after(async () => {
+        const loc = await ipLocation(ip);
+        await sendNotify(
+          "🔐 Đăng nhập mới · Quản lý nhà trọ",
+          notifyFrame(
+            "Cảnh báo bảo mật",
+            `<p style="margin:0 0 10px">Có một phiên <strong>đăng nhập mới</strong> vào hệ thống quản lý nhà trọ:</p>
+             <p style="margin:0 0 6px">👤 Người dùng: <strong>${esc((user as { email: string }).email)}</strong></p>
+             <p style="margin:0 0 6px">⏰ Thời gian: <strong>${esc(viNow())}</strong></p>
+             <p style="margin:0 0 6px">🌍 Địa chỉ IP: <strong>${esc(ip)}</strong>${loc ? ` (${esc(loc)})` : ""}</p>
+             <p style="margin:0 0 6px">💻 Thiết bị: ${esc(dev)}</p>
+             <p style="margin:12px 0 0;font-size:12px;color:#94a3b8">Nếu không phải bạn, hãy rà lại các tài khoản và liên hệ quản trị.</p>`
+          )
+        );
+      });
+      return { ok: true };
+    }
+  }
+
+  const inWindow = rec && now - new Date(rec.window_start ?? now).getTime() < winMs;
+  const attempts = (inWindow ? rec?.attempts ?? 0 : 0) + 1;
+  const windowStart = new Date(inWindow ? rec!.window_start! : now);
+  const blocked = attempts >= 5 ? new Date(now + winMs).toISOString() : null;
+  await sb
+    .from("nhatro_login_attempts")
+    .upsert({ ip, attempts, window_start: windowStart.toISOString(), blocked_until: blocked });
+  return { ok: false, error: "Email hoặc mật khẩu không đúng." };
+}
+
+export async function register(input: { name: string; email: string; password: string }): Promise<{ ok: boolean; error?: string }> {
+  const email = input.email.trim().toLowerCase();
+  const name = input.name.trim();
+  if (!name) return { ok: false, error: "Vui lòng nhập tên." };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: "Email không hợp lệ." };
+  if (input.password.length < 6) return { ok: false, error: "Mật khẩu phải có ít nhất 6 ký tự." };
+
+  const { data: existing } = await sb.from("nhatro_users").select("id").eq("email", email).maybeSingle();
+  if (existing) return { ok: false, error: "Email này đã được đăng ký." };
+
+  // Chỉ user đầu tiên mới được claim các nhà chưa có chủ (dữ liệu hiện có)
+  const { data: userCount } = await sb.from("nhatro_users").select("id", { count: "exact", head: true });
+  const isFirstUser = (userCount ?? 0) === 0;
+  let firstHouseId: number | null = null;
+  if (isFirstUser) {
+    const { data: unowned } = await sb.from("nhatro_houses").select("id").is("owner_id", null).order("id");
+    firstHouseId = ((unowned ?? [])[0] as { id?: number } | undefined)?.id ?? null;
+  }
+
+  const { data: created, error } = await sb
+    .from("nhatro_users")
+    .insert({
+      name,
+      email,
+      password_hash: hashPassword(input.password),
+      active_house_id: firstHouseId,
+      is_admin: isFirstUser,
+    })
+    .select()
+    .single();
+  if (error) return { ok: false, error: error.message };
+  const uid = (created as { id: number }).id;
+
+  if (isFirstUser) {
+    // Claim TOÀN BỘ nhà chưa có chủ (2 nhà trọ của bạn) cho user đầu tiên
+    await sb.from("nhatro_houses").update({ owner_id: uid }).is("owner_id", null);
+  }
+
+  const token = await signSession(uid);
+  const store = await cookies();
+  store.set(SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+  });
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+export async function logout() {
+  const store = await cookies();
+  store.delete(SESSION_COOKIE);
+  revalidatePath("/", "layout");
+}
+
+export async function requestPasswordReset(): Promise<{ ok: boolean; error?: string }> {
+  const hs = await headers();
+  const ip = ipFromHeaders(hs);
+  const now = Date.now();
+  const { data: rec } = (await sb
+    .from("nhatro_reset_requests")
+    .select("last_at")
+    .eq("ip", ip)
+    .maybeSingle()) as unknown as { data: { last_at?: string } | null };
+  const last = rec?.last_at ? new Date(rec.last_at).getTime() : 0;
+  if (now - last < 10 * 60 * 1000) {
+    const mins = Math.min(10, Math.ceil((10 * 60 * 1000 - (now - last)) / 60000));
+    return { ok: false, error: `Yêu cầu đã gửi gần đây. Thử lại sau ${mins} phút.` };
+  }
+  await sb.from("nhatro_reset_requests").upsert({ ip, last_at: new Date(now).toISOString() });
+
+  const dev = describeDevice(hs.get("user-agent"));
+  const loc = await ipLocation(ip);
+  await sendNotify(
+    "🔑 Quên mật khẩu · Quản lý nhà trọ",
+    notifyFrame(
+      "Yêu cầu đặt lại mật khẩu",
+      `<p style="margin:0 0 10px">Ai đó yêu cầu <strong>đặt lại mật khẩu</strong> trên hệ thống Quản lý nhà trọ:</p>
+       <p style="margin:0 0 6px">⏰ Thời gian: <strong>${esc(viNow())}</strong></p>
+       <p style="margin:0 0 6px">🌍 Địa chỉ IP: <strong>${esc(ip)}</strong>${loc ? ` (${esc(loc)})` : ""}</p>
+       <p style="margin:0 0 10px">💻 Thiết bị: ${esc(dev)}</p>
+       <p style="margin:0 0 8px">Nếu đúng là bạn, quản trị viên sẽ đặt lại mật khẩu tài khoản của bạn (vào Cài đặt → Tài khoản).</p>`
+    )
+  );
+  return { ok: true };
+}
+
+let banksCache: Bank[] | null = null;
+
+export async function getBanks(): Promise<Bank[]> {
+  if (banksCache && banksCache.length) return banksCache;
+  try {
+    const r = await fetch("https://api.vietqr.io/v2/banks", {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      cache: "force-cache",
+      next: { revalidate: 86400 },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (r.ok) {
+      const j = (await r.json()) as { data?: { bin: string; shortName: string }[] };
+      const list = (j.data || []).map((b) => ({ bin: b.bin, shortName: b.shortName }));
+      if (list.length) {
+        banksCache = list;
+        return list;
+      }
+    }
+  } catch {
+    /* fallback */
+  }
+  banksCache = STATIC_BANKS;
+  return STATIC_BANKS;
+}
+
+function formatKyNow(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+async function healMonthIntegrity(houseId: number, curKy: string | null): Promise<void> {
+  const real = formatKyNow();
+  const prev = prevKy(real);
+  if (!curKy || curKy > real) {
+    await sb.from("nhatro_houses").update({ cur_ky: real }).eq("id", houseId);
+  }
+  if (!prev) return;
+  const [{ data: pRows }, { data: cRows }] = await Promise.all([
+    sb.from("nhatro_monthly").select("*").eq("house_id", houseId).eq("ky", prev),
+    sb.from("nhatro_monthly").select("*").eq("house_id", houseId).eq("ky", real),
+  ]);
+  const pMap = new Map<string, MonthlyRow>();
+  for (const r of (pRows ?? []) as MonthlyRow[]) pMap.set(r.room, r);
+  const cMap = new Map<string, MonthlyRow>();
+  for (const r of (cRows ?? []) as MonthlyRow[]) cMap.set(r.room, r);
+  for (const p of (pRows ?? []) as MonthlyRow[]) {
+    if (!p.move_in || p.move_in.slice(0, 7) !== prev) continue;
+    const c = cMap.get(p.room);
+    if (!c) continue;
+    const pOld = p.old_index == null ? null : Number(p.old_index);
+    const pNew = p.new_index == null ? null : Number(p.new_index);
+    const cOld = c.old_index == null ? null : Number(c.old_index);
+    const cNew = c.new_index == null ? null : Number(c.new_index);
+    if (pNew != null || p.close_date != null) continue;
+    if (cNew == null || cNew === 0 || cOld == null || !c.close_date) continue;
+    const chot = String(cNew);
+    await Promise.all([
+      sb.from("nhatro_monthly")
+        .update({ old_index: String(cOld), new_index: chot, close_date: c.close_date, move_in: p.move_in })
+        .eq("house_id", houseId).eq("ky", prev).eq("room", p.room),
+      sb.from("nhatro_monthly")
+        .update({ old_index: chot, new_index: null, close_date: null })
+        .eq("house_id", houseId).eq("ky", real).eq("room", p.room),
+    ]);
+  }
+}
+
+// Danh sách nhà thuộc về user hiện tại
+async function myHouseList(): Promise<House[]> {
+  const user = await getCurrentUser();
+  if (!user) return [];
+  const { data } = await sb.from("nhatro_houses").select("*").eq("owner_id", user.id).order("id");
+  return (data ?? []) as House[];
+}
+
+// Lấy active_house của user hiện tại (isolation theo user)
+async function myActive(): Promise<{ user: SessionUser; house: House }> {
+  const user = await getCurrentUser();
+  if (!user) throw new Error("Chưa đăng nhập.");
+  const { data } = await sb.from("nhatro_houses").select("*").eq("id", user.active_house_id ?? 0).eq("owner_id", user.id).maybeSingle();
+  if (!data) {
+    // active_house không hợp lệ -> chọn nhà đầu tiên của user
+    const list = await myHouseList();
+    const fallback = list[0];
+    if (!fallback) throw new Error("Chưa có nhà trọ.");
+    if (fallback) {
+      await sb.from("nhatro_users").update({ active_house_id: fallback.id }).eq("id", user.id);
+    }
+    return { user, house: fallback };
+  }
+  return { user, house: data as House };
+}
+
+export async function getActiveHouse(): Promise<House> {
+  const { house } = await myActive();
+  await healMonthIntegrity(house.id, house.cur_ky ?? null);
+  return house;
+}
+
+async function ensureMonth(ky: string, houseId: number): Promise<void> {
+  const [{ data: rooms }, { data: existing }, { data: prev }] = await Promise.all([
+    sb.from("nhatro_rooms").select("*").eq("house_id", houseId).eq("active", true),
+    sb.from("nhatro_monthly").select("room").eq("house_id", houseId).eq("ky", ky),
+    sb.from("nhatro_monthly").select("*").eq("house_id", houseId).eq("ky", prevKy(ky)),
+  ]);
+  if (!rooms) return;
+  const have = new Set((existing ?? []).map((r: { room: string }) => r.room));
+  const prevMap = new Map<string, MonthlyRow>((prev ?? []).map((r) => [r.room, r as MonthlyRow]));
+  const rows: Omit<MonthlyRow, "id">[] = [];
+  for (const room of rooms as Room[]) {
+    if (have.has(room.room)) continue;
+    if (room.move_in && room.move_in.slice(0, 7) > ky) continue;
+    const p = prevMap.get(room.room);
+    const old_index = p ? (p.new_index ?? p.old_index) : null;
+    rows.push({
+      house_id: houseId,
+      ky,
+      room: room.room,
+      tenant: room.tenant,
+      phone: room.phone,
+      occupancy: room.occupancy,
+      old_index,
+      new_index: null,
+      close_date: null,
+      move_in: room.move_in ?? null,
+      move_out: room.contract_end ?? null,
+      nights: 0,
+      violations: 0,
+      guest: 0,
+      paid: 0,
+    });
+  }
+  if (rows.length > 0) {
+    await sb.from("nhatro_monthly").insert(rows);
+  }
+}
+
+export async function saveMonth(ky: string, rows: MonthlyRow[]) {
+  const house = await getActiveHouse();
+  const [{ data: roomList }, { data: existing }] = await Promise.all([
+    sb.from("nhatro_rooms").select("room, occupancy, tenant, phone").eq("house_id", house.id),
+    sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", ky),
+  ]);
+  const occMap = new Map<string, number>((roomList ?? []).map((r) => [r.room, Number(r.occupancy) || 0]));
+  const tenantMap = new Map<string, string>((roomList ?? []).map((r) => [r.room, r.tenant]));
+  const phoneMap = new Map<string, string>((roomList ?? []).map((r) => [r.room, r.phone]));
+  const existMap = new Map<string, MonthlyRow>((existing ?? []).map((r: MonthlyRow) => [r.room, r]));
+  const upserts = rows.map((r) => {
+    const ni: unknown = r.new_index;
+    const ci: unknown = r.close_date;
+    const mi: unknown = r.move_in;
+    const mo: unknown = r.move_out;
+    return {
+      house_id: house.id,
+      ky,
+      room: r.room,
+      tenant: tenantMap.get(r.room) ?? r.tenant,
+      phone: phoneMap.get(r.room) ?? r.phone,
+      occupancy: occMap.get(r.room) ?? (Number(r.occupancy) || 0),
+      old_index: r.old_index ?? null,
+      new_index: ni == null || ni === "" ? null : Number(ni),
+      close_date: ci == null || ci === "" ? null : ci,
+      move_in: mi == null || mi === "" ? null : mi,
+      move_out: mo == null || mo === "" ? null : mo,
+      nights: Number(r.nights) || 0,
+      violations: Number(r.violations) || 0,
+      guest: Number(r.guest) ? 1 : 0,
+      paid: Number(r.paid) || 0,
+    };
+  });
+
+  const fieldsToTrack: (keyof MonthlyRow)[] = ["new_index", "close_date", "move_in", "move_out", "nights", "violations", "paid"];
+  const auditEntries: { ky?: string; room: string; field: string; old_val: string; new_val: string }[] = [];
+  for (const u of upserts) {
+    const old = existMap.get(u.room);
+    if (old) {
+      for (const f of fieldsToTrack) {
+        const ov = String((old as Record<string, unknown>)[f] ?? "");
+        const nv = String((u as Record<string, unknown>)[f] ?? "");
+        if (ov !== nv) auditEntries.push({ ky, room: u.room, field: f, old_val: ov, new_val: nv });
+      }
+    }
+  }
+
+  for (const u of upserts) {
+    const { error } = await sb
+      .from("nhatro_monthly")
+      .upsert(u, { onConflict: "house_id,ky,room" });
+    if (error) return { ok: false, error: error.message };
+  }
+  const next = nextKy(ky);
+  for (const u of upserts) {
+    const nextOldIndex = u.new_index ?? u.old_index ?? null;
+    await sb
+      .from("nhatro_monthly")
+      .update({ old_index: nextOldIndex })
+      .eq("house_id", house.id)
+      .eq("ky", next)
+      .eq("room", u.room);
+  }
+
+  if (auditEntries.length > 0) await logAudit(house.id, auditEntries);
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+export async function setCurrentMonth(ky: string) {
+  if (ky > formatKyNow()) return { ok: false, error: "Chưa đến thời điểm này." };
+  const house = await getActiveHouse();
+  await ensureMonth(ky, house.id);
+  await sb.from("nhatro_houses").update({ cur_ky: ky }).eq("id", house.id);
+  revalidatePath("/", "layout");
+  return { ok: true, ky };
+}
+
+export async function updateSettings(data: Partial<House>) {
+  const house = await getActiveHouse();
+  const { data: oldHouse } = await sb.from("nhatro_houses").select("bank_code,bank_account,bank_name").eq("id", house.id).single();
+  const { error } = await sb.from("nhatro_houses").update(data).eq("id", house.id);
+  if (error) return { ok: false, error: error.message };
+  const auditEntries: { room?: string; field: string; old_val: string; new_val: string }[] = [];
+  for (const f of ["bank_code", "bank_account", "bank_name"] as const) {
+    const ov = String(oldHouse?.[f] ?? "");
+    const nv = String((data as Record<string, unknown>)[f] ?? "");
+    if (ov !== nv) auditEntries.push({ field: `settings.${f}`, old_val: ov, new_val: nv });
+  }
+  if (auditEntries.length > 0) await logAudit(house.id, auditEntries);
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+export async function upsertPrices(prices: { occupancy: number; price: number }[]) {
+  const house = await getActiveHouse();
+  const { data: oldPrices } = await sb.from("nhatro_prices").select("occupancy,price").eq("house_id", house.id);
+  const oldMap = new Map((oldPrices ?? []).map((p: { occupancy: number; price: number }) => [p.occupancy, p.price]));
+  const auditEntries: { room?: string; field: string; old_val: string; new_val: string }[] = [];
+  for (const p of prices) {
+    const ov = String(oldMap.get(p.occupancy) ?? "");
+    const nv = String(Number(p.price));
+    if (ov !== nv) auditEntries.push({ room: `price_${p.occupancy}`, field: "price", old_val: ov, new_val: nv });
+    const { error } = await sb
+      .from("nhatro_prices")
+      .upsert(
+        { house_id: house.id, occupancy: p.occupancy, price: Number(p.price) },
+        { onConflict: "house_id,occupancy" }
+      );
+    if (error) return { ok: false, error: error.message };
+  }
+  if (auditEntries.length > 0) await logAudit(house.id, auditEntries);
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+export async function getRoomInfo(room: string): Promise<{ ok: boolean; room?: Room; error?: string }> {
+  const house = await getActiveHouse();
+  const { data } = await sb
+    .from("nhatro_rooms")
+    .select("*")
+    .eq("house_id", house.id)
+    .eq("room", room)
+    .single();
+  if (!data) return { ok: false, error: `Không có thông tin phòng ${room}.` };
+  const r = data as Room;
+  let initial: number | null = null;
+  if (r.move_in) {
+    const { data: miRow } = await sb
+      .from("nhatro_monthly")
+      .select("old_index")
+      .eq("house_id", house.id)
+      .eq("ky", r.move_in.slice(0, 7))
+      .eq("room", room)
+      .maybeSingle();
+    if (miRow && miRow.old_index != null) initial = Number(miRow.old_index);
+  }
+  return { ok: true, room: { ...r, initial_index: initial } };
+}
+
+export async function upsertRooms(rooms: Room[]) {
+  const house = await getActiveHouse();
+  const { data: existingRooms } = await sb.from("nhatro_rooms").select("*").eq("house_id", house.id);
+  const existMap = new Map<string, Record<string, unknown>>((existingRooms ?? []).map((r: Record<string, unknown>) => [r.room as string, r]));
+  for (const r of rooms) {
+    if ((Number(r.occupancy) || 0) > 0 && !r.move_in) {
+      return { ok: false, error: `Phòng ${r.room}: Ngày vào ở là bắt buộc khi có người ở.` };
+    }
+    if (r.move_in && r.contract_end && r.contract_end < r.move_in) {
+      return { ok: false, error: `Phòng ${r.room}: Ngày kết thúc HĐ phải sau ngày vào ở.` };
+    }
+  }
+  const { data: monthRows } = await sb
+    .from("nhatro_monthly")
+    .select("ky,room,move_in,move_out,occupancy,tenant,phone")
+    .eq("house_id", house.id);
+  const monthsByRoom = new Map<string, { ky: string }[]>();
+  for (const r of (monthRows ?? []) as { room: string; ky: string }[]) {
+    const arr = monthsByRoom.get(r.room) ?? [];
+    arr.push(r);
+    monthsByRoom.set(r.room, arr);
+  }
+  const roomAuditFields: { field: string; dbKey: string }[] = [
+    { field: "tenant", dbKey: "tenant" },
+    { field: "phone", dbKey: "phone" },
+    { field: "occupancy", dbKey: "occupancy" },
+    { field: "move_in", dbKey: "move_in" },
+    { field: "contract_end", dbKey: "contract_end" },
+    { field: "tam_tru_date", dbKey: "tam_tru_date" },
+    { field: "deposit", dbKey: "deposit" },
+    { field: "email", dbKey: "email" },
+  ];
+  const auditEntries: { ky?: string; room: string; field: string; old_val: string; new_val: string }[] = [];
+  for (const r of rooms) {
+    const old = existMap.get(r.room);
+    if (old) {
+      for (const { field, dbKey } of roomAuditFields) {
+        const ov = String(old[dbKey] ?? "");
+        const nv = String((r as Record<string, unknown>)[field] ?? "");
+        if (ov !== nv) auditEntries.push({ room: r.room, field, old_val: ov, new_val: nv });
+      }
+    }
+    const { error } = await sb
+      .from("nhatro_rooms")
+      .upsert(
+        {
+          house_id: house.id,
+          room: r.room,
+          tenant: r.tenant,
+          phone: r.phone,
+          occupancy: Number(r.occupancy) || 0,
+          move_in: r.move_in || null,
+          contract_end: r.contract_end || null,
+          tam_tru_date: r.tam_tru_date || null,
+          email: r.email || null,
+          deposit: Number(r.deposit) || 0,
+          deposit_date: r.deposit_date || null,
+          washing_machine: Boolean(r.washing_machine),
+          active: r.active ?? true,
+        },
+        { onConflict: "house_id,room" }
+      );
+    if (error) return { ok: false, error: error.message };
+    for (const k of monthsByRoom.get(r.room) ?? []) {
+      const { data: existingMonthRow } = await sb
+        .from("nhatro_monthly")
+        .select("move_in, move_out")
+        .eq("house_id", house.id)
+        .eq("ky", k.ky)
+        .eq("room", r.room)
+        .single();
+      const newMoveIn = r.move_in || null;
+      const newMoveOut = r.contract_end || null;
+      const oldMoveIn = existingMonthRow?.move_in ?? null;
+      const oldMoveOut = existingMonthRow?.move_out ?? null;
+      if (oldMoveIn !== newMoveIn) auditEntries.push({ ky: k.ky, room: r.room, field: "move_in", old_val: oldMoveIn ?? "", new_val: newMoveIn ?? "" });
+      if (oldMoveOut !== newMoveOut) auditEntries.push({ ky: k.ky, room: r.room, field: "move_out", old_val: oldMoveOut ?? "", new_val: newMoveOut ?? "" });
+      await sb
+        .from("nhatro_monthly")
+        .update({
+          move_in: newMoveIn,
+          move_out: newMoveOut,
+          tenant: r.tenant,
+          phone: r.phone,
+          occupancy: Number(r.occupancy) || 0,
+        })
+        .eq("house_id", house.id)
+        .eq("ky", k.ky)
+        .eq("room", r.room);
+    }
+    const initial = r.initial_index == null ? null : Number(r.initial_index);
+    const miKy = r.move_in ? r.move_in.slice(0, 7) : null;
+    if (initial != null && miKy) {
+      for (const k of monthsByRoom.get(r.room) ?? []) {
+        if (k.ky !== miKy) continue;
+        await sb
+          .from("nhatro_monthly")
+          .update({ old_index: initial })
+          .eq("house_id", house.id)
+          .eq("ky", k.ky)
+          .eq("room", r.room);
+      }
+    }
+  }
+  if (auditEntries.length > 0) await logAudit(house.id, auditEntries);
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+export async function dataForKy(ky: string) {
+  const prev = prevKy(ky);
+  let house: House | null = null;
+  try {
+    house = (await myActive()).house;
+  } catch {
+    return {
+      house: null as unknown as House,
+      rows: [] as MonthlyRow[],
+      prices: [],
+      minKy: null as string | null,
+      prevRows: [] as MonthlyRow[],
+    };
+  }
+  const realNow = formatKyNow();
+  if (house && (ky === realNow || ky === prevKy(realNow))) {
+    await healMonthIntegrity(house.id, house.cur_ky ?? null);
+  }
+  const [
+    { data: rooms },
+    { data: prices },
+    { data: rows },
+    { data: prevRows },
+  ] = await Promise.all([
+    sb.from("nhatro_rooms").select("*").eq("house_id", house.id).eq("active", true).order("room"),
+    sb.from("nhatro_prices").select("*").eq("house_id", house.id),
+    sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", ky).order("room"),
+    sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", prev),
+  ]);
+  if (!house)
+    return {
+      house: null as unknown as House,
+      rows: [] as MonthlyRow[],
+      prices: [],
+      minKy: null as string | null,
+      prevRows: [] as MonthlyRow[],
+    };
+  const houseRooms = (rooms ?? []) as Room[];
+  const housePrices = (prices ?? []) as { occupancy: number; price: number }[];
+  let houseRows = (rows ?? []) as MonthlyRow[];
+  const have = new Set(houseRows.map((r) => r.room));
+  const prevMap = new Map<string, MonthlyRow>(
+    (prevRows ?? []).filter((r: MonthlyRow) => r.house_id === house.id).map((r) => [r.room, r])
+  );
+  const minKy = houseRooms
+    .map((r) => (r.move_in ? r.move_in.slice(0, 7) : null))
+    .filter((x): x is string => !!x)
+    .sort()[0] ?? null;
+  const missing = houseRooms.filter(
+    (r) => !have.has(r.room) && (!r.move_in || r.move_in.slice(0, 7) <= ky)
+  );
+  if (missing.length > 0 && ky <= realNow) {
+    const inserts = missing.map((room) => {
+      const p = prevMap.get(room.room);
+const old_index = p ? (p.new_index ?? p.old_index) : null;
+      return {
+        house_id: house.id,
+        ky,
+        room: room.room,
+        tenant: room.tenant,
+        phone: room.phone,
+        occupancy: Number(room.occupancy) || 0,
+        old_index,
+        new_index: null,
+        close_date: null,
+        move_in: room.move_in ?? null,
+        move_out: null,
+        nights: 0,
+        violations: 0,
+        guest: 0,
+        paid: 0,
+      };
+    });
+    await sb.from("nhatro_monthly").insert(inserts);
+    houseRows = [...houseRows, ...(inserts as MonthlyRow[])];
+  }
+  const synced = applyRoomSync(houseRows, houseRooms);
+  synced.sort((a, b) => a.room.localeCompare(b.room, "en", { numeric: true }));
+  const prevSynced = applyRoomSync(
+    ((prevRows ?? []) as MonthlyRow[]).filter((r) => r.house_id === house.id),
+    houseRooms
+  );
+  return {
+    house,
+    rows: synced as MonthlyRow[],
+    prices: housePrices as { occupancy: number; price: number }[],
+    minKy,
+    prevRows: prevSynced as MonthlyRow[],
+  };
+}
+
+export async function listMonths() {
+  let house: House | null = null;
+  try {
+    house = (await myActive()).house;
+  } catch {
+    return [];
+  }
+  if (!house) return [];
+  const [{ data: prices }, { data: rooms }, { data: all }] = await Promise.all([
+    sb.from("nhatro_prices").select("*").eq("house_id", house.id),
+    sb.from("nhatro_rooms").select("*").eq("house_id", house.id).eq("active", true),
+    sb.from("nhatro_monthly").select("*").eq("house_id", house.id),
+  ]);
+  const houseRooms = (rooms ?? []).filter((r: Room) => r.house_id === house.id);
+  const priceMap = pricesToMap((prices ?? []).filter((p) => p.house_id === house.id));
+  const byKy = new Map<string, MonthlyRow[]>();
+  for (const r of ((all ?? []) as MonthlyRow[]).filter((r) => r.house_id === house.id)) {
+    const arr = byKy.get(r.ky) ?? [];
+    arr.push(r);
+    byKy.set(r.ky, arr);
+  }
+  const out: { ky: string; total: number; paid: number; count: number }[] = [];
+  for (const k of [...byKy.keys()].sort()) {
+    if (house.cur_ky && k > house.cur_ky) continue;
+    const rows = byKy.get(k)!;
+    const prevK = byKy.get(prevKy(k)) ?? [];
+    const computed = computeRows(
+      house,
+      priceMap,
+      applyRoomSync(rows, houseRooms),
+      applyRoomSync(prevK, houseRooms)
+    );
+    out.push({
+      ky: k,
+      total: computed.reduce((a, c) => a + c.total, 0),
+      paid: computed.reduce((a, c) => a + c.paid, 0),
+      count: computed.filter((c) => c.total > 0).length,
+    });
+  }
+  out.sort((a, b) => b.ky.localeCompare(a.ky));
+  return out;
+}
+
+export async function listHouses() {
+  const user = await getCurrentUser();
+  if (!user) return { active: 0, houses: [] as House[] };
+  const houses = await myHouseList();
+  return { active: user.active_house_id ?? 0, houses };
+}
+
+export async function bangTinhKy() {
+  const house = await getActiveHouse();
+  return house.cur_ky;
+}
+
+export async function dashboardData() {
+  const user = await getCurrentUser();
+  const houseList = user ? await myHouseList() : ([] as House[]);
+  for (const h of houseList) {
+    if (h.id != null) await healMonthIntegrity(h.id, h.cur_ky ?? null);
+  }
+  if (houseList.length === 0) return { active: 0, houses: [], totalCumRevenue: 0, totalCumPaid: 0 };
+  const ids = houseList.map((h) => h.id);
+  const [{ data: prices }, { data: rooms }, { data: monthly }] = await Promise.all([
+    sb.from("nhatro_prices").select("*").in("house_id", ids),
+    sb.from("nhatro_rooms").select("*").eq("active", true).in("house_id", ids),
+    sb.from("nhatro_monthly").select("*").in("house_id", ids),
+  ]);
+  const priceMapByHouse = new Map<number, Record<number, number>>();
+  for (const p of (prices ?? []) as { house_id: number; occupancy: number; price: number }[]) {
+    if (!priceMapByHouse.has(p.house_id)) priceMapByHouse.set(p.house_id, {});
+    priceMapByHouse.get(p.house_id)![p.occupancy] = Number(p.price);
+  }
+  const roomsByHouse = new Map<number, number>();
+  for (const r of (rooms ?? []) as { house_id: number; occupancy: number }[]) {
+    roomsByHouse.set(r.house_id, (roomsByHouse.get(r.house_id) ?? 0) + (Number(r.occupancy) || 0));
+  }
+  const byHouseKy = new Map<string, MonthlyRow[]>();
+  for (const r of (monthly ?? []) as MonthlyRow[]) {
+    const key = `${r.house_id}|${r.ky}`;
+    const arr = byHouseKy.get(key) ?? [];
+    arr.push(r);
+    byHouseKy.set(key, arr);
+  }
+  const roomsByHouseFull = new Map<number, number>();
+  const occupiedByHouse = new Map<number, number>();
+  for (const r of (rooms ?? []) as Room[]) {
+    const hId = r.house_id ?? 0;
+    roomsByHouseFull.set(hId, (roomsByHouseFull.get(hId) ?? 0) + 1);
+    if (Number(r.occupancy) > 0) occupiedByHouse.set(hId, (occupiedByHouse.get(hId) ?? 0) + 1);
+  }
+  const out = houseList.map((h) => {
+    const houseRooms = (rooms ?? []).filter((r: Room) => r.house_id === h.id);
+    const curRows = byHouseKy.get(`${h.id}|${h.cur_ky}`) ?? [];
+    const prevRowsH = byHouseKy.get(`${h.id}|${prevKy(h.cur_ky)}`) ?? [];
+    const computed = computeRows(
+      h,
+      priceMapByHouse.get(h.id) ?? {},
+      applyRoomSync(curRows, houseRooms),
+      applyRoomSync(prevRowsH, houseRooms)
+    );
+    const revenue = computed.reduce((a, c) => a + c.total, 0);
+    const paid = computed.reduce((a, c) => a + c.paid, 0);
+    const allKy = new Set<string>();
+    for (const r of (monthly ?? []) as MonthlyRow[]) if (r.house_id === h.id) allKy.add(r.ky);
+    let cumRevenue = 0;
+    let cumPaid = 0;
+    for (const k of allKy) {
+      if (k > h.cur_ky) continue;
+      const kr = byHouseKy.get(`${h.id}|${k}`) ?? [];
+      const prevK = byHouseKy.get(`${h.id}|${prevKy(k)}`) ?? [];
+      const kc = computeRows(
+        h,
+        priceMapByHouse.get(h.id) ?? {},
+        applyRoomSync(kr, houseRooms),
+        applyRoomSync(prevK, houseRooms)
+      );
+      cumRevenue += kc.reduce((a, c) => a + c.total, 0);
+      cumPaid += kc.reduce((a, c) => a + c.paid, 0);
+    }
+    return {
+      id: h.id,
+      name: h.name,
+      address: h.address,
+      cur_ky: h.cur_ky,
+      revenue,
+      paid,
+      cumRevenue,
+      cumPaid,
+      people: roomsByHouse.get(h.id) ?? 0,
+      roomCount: roomsByHouseFull.get(h.id) ?? 0,
+      occupied: occupiedByHouse.get(h.id) ?? 0,
+    };
+  });
+  out.sort((a, b) => b.revenue - a.revenue);
+  const totalCumRevenue = out.reduce((a, h) => a + h.cumRevenue, 0);
+  const totalCumPaid = out.reduce((a, h) => a + h.cumPaid, 0);
+  return { active: user?.active_house_id ?? 0, houses: out, totalCumRevenue, totalCumPaid };
+}
+
+export async function activateHouse(id: number) {
+  const user = await getCurrentUser();
+  if (!user) return;
+  // Chi nhà thuộc user mới được kích hoạt
+  const { data } = await sb.from("nhatro_houses").select("id").eq("id", id).eq("owner_id", user.id).maybeSingle();
+  if (data) await sb.from("nhatro_users").update({ active_house_id: id }).eq("id", user.id);
+}
+
+export async function settingsData() {
+  const user = await getCurrentUser();
+  let hid: number | null = user?.active_house_id ?? null;
+  const empty = {
+    house: null as House | null,
+    prices: [] as { occupancy: number; price: number }[],
+    rooms: [] as Room[],
+    me: user
+      ? { id: user.id, email: user.email, name: user.name, is_admin: user.is_admin }
+      : null,
+    users: [] as UserAccount[],
+  };
+  if (hid == null) return empty;
+  const [{ data: house }, { data: prices }, { data: rooms }] = await Promise.all([
+    sb.from("nhatro_houses").select("*").eq("id", hid).eq("owner_id", user!.id).maybeSingle(),
+    sb.from("nhatro_prices").select("*").eq("house_id", hid).order("occupancy"),
+    sb.from("nhatro_rooms").select("*").eq("house_id", hid).order("room"),
+  ]);
+  const users = user?.is_admin ? await listUsers() : [];
+  return {
+    house: (house ?? null) as House | null,
+    prices: (prices ?? []) as { occupancy: number; price: number }[],
+    rooms: (rooms ?? []) as Room[],
+    me: user
+      ? { id: user.id, email: user.email, name: user.name, is_admin: user.is_admin }
+      : null,
+    users,
+  };
+}
+
+export async function setActiveHouse(formData: FormData) {
+  const id = Number(formData.get("id"));
+  const user = await getCurrentUser();
+  if (user) {
+    const { data } = await sb.from("nhatro_houses").select("id").eq("id", id).eq("owner_id", user.id).maybeSingle();
+    if (data) await sb.from("nhatro_users").update({ active_house_id: id }).eq("id", user.id);
+  }
+  revalidatePath("/", "layout");
+  redirect("/bang-tinh");
+}
+
+export async function createHouse(formData: FormData) {
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) return;
+  const user = await getCurrentUser();
+  if (!user) return;
+  const address = String(formData.get("address") ?? "").trim();
+  const now = new Date();
+  const curKy = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const { data, error } = await sb
+    .from("nhatro_houses")
+    .insert({ name, address: address || null, cur_ky: curKy, owner_id: user.id })
+    .select()
+    .single();
+  if (error || !data) return;
+  await sb.from("nhatro_prices").insert([
+    { house_id: data.id, occupancy: 1, price: 2500000 },
+    { house_id: data.id, occupancy: 2, price: 3000000 },
+  ]);
+  await sb.from("nhatro_users").update({ active_house_id: data.id }).eq("id", user.id);
+  revalidatePath("/", "layout");
+  redirect(`/nha/${data.id}`);
+}
+
+function esc(s: unknown): string {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function buildPhieuHtml(house: House, c: ComputedRow, ky: string): string {
+  const pDateStr = fmtDateVi(c.prevCloseDate);
+  const oDateStr =
+    c.prevMoveIn && c.prevMoveIn.slice(0, 7) === prevKy(ky) ? fmtDateVi(c.prevMoveIn) : null;
+  const pl = ` (tháng ${displayKy(prevKy(ky))})`;
+  const items: [string, number, string][] = [
+    ["Tiền phòng", c.rent, c.rentNote || (c.occupancy > 0 ? `(${c.occupancy} người)` : "")],
+    ["Tiền nước" + pl, c.water, utilNote(c.prevOcc, c.prevUtilNote, ky, Boolean(c.washing_machine), c.prevUtilGuest)],
+    ["Wifi + Rác" + pl, c.wifi, utilNote(c.prevOcc, c.prevUtilNote, ky, undefined, c.prevUtilGuest)],
+    ["Tiền điện" + pl, c.elec, c.prevKwh > 0 ? (oDateStr && pDateStr
+      ? `Số cũ: ${c.prevOldIndex.toLocaleString("vi-VN")} (${oDateStr}) → Số mới: ${c.prevNewIndex.toLocaleString("vi-VN")} (${pDateStr}) = ${c.prevKwh.toLocaleString("vi-VN")} kWh`
+      : `Số cũ: ${c.prevOldIndex.toLocaleString("vi-VN")} → Số mới: ${c.prevNewIndex.toLocaleString("vi-VN")} = ${c.prevKwh.toLocaleString("vi-VN")} kWh${pDateStr ? ` (chốt ngày ${pDateStr})` : ""}`
+    ) : ""],
+    [
+      "Phụ phí" + pl,
+      c.penalty,
+      c.penalty > 0 ? `(khách đêm: ${c.prevNights}, vi phạm: ${c.prevViolations})` : "",
+    ],
+  ];
+  const rows = items
+    .map(
+      ([label, val, note]) => {
+        const isElec = label.startsWith("Tiền điện");
+        const noteStyle = isElec
+          ? "display:block;margin-top:2px;padding-left:4px;font-size:12px;color:#64748b"
+          : "color:#94a3b8";
+        return `<tr><td style="border:1px solid #e2e8f0;padding:8px 12px;">${esc(label)} ${note ? `<span style="${noteStyle}">${esc(note)}</span>` : ""}</td><td style="border:1px solid #e2e8f0;padding:8px 12px;text-align:right;white-space:nowrap">${fmt(val)}</td></tr>`;
+      }
+    )
+    .join("");
+  const qrUrl =
+    house.bank_code && house.bank_account
+      ? "https://nhatro-ten.vercel.app" +
+        vietQrLocalUrl({
+          bankCode: house.bank_code,
+          accountNumber: house.bank_account,
+          amount: c.remain,
+          reference: `P${c.room} ${displayKy(ky)}`,
+        })
+      : "";
+  const info = [
+    ["Phòng", c.room],
+    ["Người thuê", c.tenant || "—"],
+    ["SĐT", c.phone || "—"],
+    ["Số người", String(c.occupancy)],
+  ]
+    .map(
+      ([l, v]) =>
+        `<tr><td style="padding:3px 12px 3px 0;color:#64748b;white-space:nowrap;width:1%">${l}</td><td style="padding:3px 0;font-weight:600">${esc(String(v))}</td></tr>`
+    )
+    .join("");
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body style="font-family:Arial,Helvetica,sans-serif;color:#0f172a;margin:0;padding:16px;background:#f1f5f9">
+  <div style="max-width:520px;width:100%;margin:0 auto;background:#ffffff;border-radius:12px;padding:20px;border:1px solid #e2e8f0;box-sizing:border-box">
+    <h1 style="text-align:center;color:#1e3a8a;font-size:22px;margin:0">PHIẾU THU TIỀN TRỌ</h1>
+    <p style="text-align:center;margin:4px 0">Tháng ${esc(displayKy(ky))}</p>
+    <p style="text-align:center;color:#64748b;font-size:14px;margin:4px 0 0">Địa chỉ: ${esc(house.address)}</p>
+    <table style="width:100%;border-collapse:collapse;font-size:14px;margin:16px 0">${info}</table>
+    <table style="width:100%;border-collapse:collapse;font-size:14px">${rows}
+      <tr style="background:#ffedd5;font-weight:700"><td style="border:1px solid #e2e8f0;padding:8px 12px">TỔNG CỘNG</td><td style="border:1px solid #e2e8f0;padding:8px 12px;text-align:right;white-space:nowrap">${fmt(c.total)}</td></tr>
+      <tr><td style="border:1px solid #e2e8f0;padding:8px 12px">Đã đóng</td><td style="border:1px solid #e2e8f0;padding:8px 12px;text-align:right;white-space:nowrap">${fmt(c.paid)}</td></tr>
+      <tr><td style="border:1px solid #e2e8f0;padding:8px 12px">Còn lại</td><td style="border:1px solid #e2e8f0;padding:8px 12px;text-align:right;white-space:nowrap;font-weight:600">${fmt(c.remain)}</td></tr>
+    </table>
+    <p style="font-size:13px;margin:12px 0 4px">Hạn thanh toán: ${esc(house.due_text)}</p>
+    <p style="font-size:13px;margin:4px 0">Chuyển khoản: ${esc(house.transfer_note)}</p>
+    <div style="text-align:center;margin:8px 0">${qrUrl ? `<img src="${esc(qrUrl)}" alt="QR chuyển khoản" width="180" style="width:180px;max-width:180px;height:auto;border:1px solid #e2e8f0;border-radius:8px">` : `<div style="background:#fff7ed;border:1px solid #fdba74;border-radius:8px;padding:10px;color:#9a3412;font-size:13px">⚠ Chưa cấu hình số tài khoản ngân hàng trong Cài đặt. QR chưa hiển thị được số tiền cần chuyển.</div>`}</div>
+    <p style="text-align:center;font-size:12px;color:#94a3b8;margin:2px 0 0">Nội dung: P${esc(c.room)} ${esc(displayKy(ky))}</p>
+    <p style="text-align:center;font-style:italic;font-size:13px;color:#475569;margin:12px 0 0">Cảm ơn bạn đã thanh toán đúng hạn!</p>
+  </div></body></html>`;
+}
+
+function buildConfirmHtml(
+  house: House,
+  c: ComputedRow,
+  ky: string,
+  receive: number,
+  newPaid: number,
+  newRemain: number,
+  hadPrior: boolean
+): string {
+  const paid = c.paid;
+  const due = newRemain > 0;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body style="font-family:Arial,Helvetica,sans-serif;color:#0f172a;margin:0;padding:16px;background:#f1f5f9">
+  <div style="max-width:520px;width:100%;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e2e8f0;box-sizing:border-box">
+    <div style="background:linear-gradient(135deg,#16a34a,#059669);color:#ffffff;text-align:center;padding:24px 20px">
+      <p style="font-size:13px;letter-spacing:1px;margin:0 0 6px;opacity:.85">BIÊN LAI THU TIỀN TRỌ</p>
+      <p style="font-size:22px;font-weight:700;margin:0;letter-spacing:.5px">XÁC NHẬN THANH TOÁN</p>
+      <p style="font-size:13px;margin:8px 0 0;opacity:.95">${house.name ? `${esc(house.name)} · ` : ""}${esc(displayKy(ky))}</p>
+    </div>
+    <div style="padding:20px 24px">
+      <p style="font-size:14px;color:#334155;margin:0 0 4px">Kính gửi <strong>${esc(c.tenant || "Quý khách")}</strong><span style="color:#94a3b8"> · Phòng ${esc(c.room)}</span></p>
+      <p style="font-size:13px;color:#64748b;margin:0 0 16px">${hadPrior ? "Chúng tôi đã nhận thêm một khoản thanh toán. Chi tiết hóa đơn của bạn:" : "Chúng tôi đã nhận thanh toán từ bạn. Chi tiết hóa đơn:"}</p>
+
+      <table style="width:100%;border-collapse:collapse;font-size:14px;margin:0 0 4px">
+        <tr><td style="padding:6px 0;color:#64748b">Tổng tiền phải đóng</td><td style="padding:6px 0;text-align:right;font-weight:600">${fmt(c.total)}</td></tr>
+        <tr style="background:#f0fdf4"><td style="padding:7px 10px;border-radius:6px;color:#16a34a;font-weight:700">+ Số tiền nhận lần này</td><td style="padding:7px 10px;border-radius:6px;text-align:right;font-weight:700;color:#16a34a">${fmt(receive)}</td></tr>
+        <tr><td style="padding:6px 0;color:#64748b">Đã đóng trước đó</td><td style="padding:6px 0;text-align:right">${fmt(paid)}</td></tr>
+        <tr><td style="padding:6px 0;color:#64748b">Tổng đã đóng</td><td style="padding:6px 0;text-align:right;font-weight:700">${fmt(newPaid)}</td></tr>
+        <tr><td style="padding:6px 0;color:#64748b">Còn thiếu</td><td style="padding:6px 0;text-align:right;font-weight:800;color:${due ? "#dc2626" : "#16a34a"};font-size:16px">${fmt(newRemain)}</td></tr>
+      </table>
+      <p style="font-size:12px;color:#94a3b8;margin:2px 0 16px;text-align:right">${due ? `Số còn thiếu sau lần nhận này: ${fmt(newRemain)}` : "Đã thanh toán đầy đủ."}</p>
+
+      <div style="${due ? "background:#fff7ed;border:1px solid #fdba74" : "background:#ecfdf5;border:1px solid #6ee7b7"};border-radius:10px;padding:12px 14px;font-size:14px;text-align:center">
+        ${due
+          ? `<span style="font-weight:700;color:#9a3412">⚠ Bạn còn thiếu <span style="font-size:17px">${fmt(newRemain)}</span></span><br><span style="color:#9a3412;font-size:13px">Vui lòng thanh toán phần còn lại để hoàn tất tháng ${esc(displayKy(ky))}.</span>`
+          : `<span style="font-weight:700;color:#065f46">✓ Hoàn tất! Đã nhận đủ tổng ${fmt(newPaid)} cho tháng ${esc(displayKy(ky))}.</span><br><span style="color:#065f46;font-size:13px">Cảm ơn bạn đã thanh toán đúng hạn.</span>`}
+      </div>
+
+      ${due
+        ? `<div style="margin-top:16px;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px">
+            <p style="font-size:12px;font-weight:700;letter-spacing:.5px;color:#64748b;margin:0 0 8px">CHUYỂN KHOẢN PHẦN CÒN THIẾU</p>
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+              ${house.bank_name ? `<tr><td style="padding:3px 0;color:#64748b">Chủ tài khoản</td><td style="padding:3px 0;text-align:right;font-weight:600">${esc(house.bank_name)}</td></tr>` : ""}
+              ${house.bank_account ? `<tr><td style="padding:3px 0;color:#64748b">Số tài khoản</td><td style="padding:3px 0;text-align:right;font-weight:600">${esc(house.bank_account)}</td></tr>` : ""}
+              ${house.bank_code ? `<tr><td style="padding:3px 0;color:#64748b">Ngân hàng</td><td style="padding:3px 0;text-align:right;font-weight:600">${esc(house.bank_code)}</td></tr>` : ""}
+              <tr><td style="padding:3px 0;color:#64748b">Nội dung CK</td><td style="padding:3px 0;text-align:right;font-weight:700">P${esc(c.room)} ${esc(displayKy(ky))}</td></tr>
+            </table>
+          </div>`
+        : ""}
+
+      <p style="font-size:12px;color:#94a3b8;margin:16px 0 0;text-align:center">${esc(house.address)}</p>
+      <p style="font-size:13px;color:#475569;margin:6px 0 0;text-align:center">${house.bank_name ? `Trân trọng, <strong>${esc(house.bank_name)}</strong>` : "Trân trọng"}</p>
+    </div>
+  </div></body></html>`;
+}
+
+export async function sendPhieuEmail(ky: string, room: string) {
+  const key = process.env.RESEND_API_KEY;
+  const from = process.env.MAIL_FROM;
+  if (!key || !from) {
+    return { ok: false, error: "Chưa cấu hình gửi email (RESEND_API_KEY / MAIL_FROM)." };
+  }
+  const house = await getActiveHouse();
+  const [{ data: row }, { data: prevRow }, { data: roomRow }, { data: prices }] = await Promise.all([
+    sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", ky).eq("room", room).single(),
+    sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", prevKy(ky)).eq("room", room).maybeSingle(),
+    sb.from("nhatro_rooms").select("*").eq("house_id", house.id).eq("room", room).single(),
+    sb.from("nhatro_prices").select("*").eq("house_id", house.id),
+  ]);
+  if (!row) return { ok: false, error: "Không có dữ liệu phiếu cho phòng này." };
+  const to = (roomRow as Room | null)?.email?.trim();
+  if (!to) return { ok: false, error: "Phòng chưa có email người thuê trong Cài đặt." };
+  const synced = applyRoomSync([row as MonthlyRow], (roomRow ? [roomRow] : []) as Room[])[0] as MonthlyRow;
+  const c = computeRow(house, pricesToMap(prices ?? []), synced, (prevRow ?? null) as MonthlyRow | null);
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from,
+      to: [to],
+      cc: ["info@legaleader.com"],
+      subject: `Phiếu thu tiền trọ ${displayKy(ky)} - Phòng ${c.room}`,
+      html: buildPhieuHtml(house, c, ky),
+    }),
+  });
+  const json = (await res.json().catch(() => ({}))) as { message?: string };
+  if (!res.ok) return { ok: false, error: json?.message || `Lỗi gửi email (HTTP ${res.status})` };
+  return { ok: true };
+}
+
+export async function confirmPayment(ky: string, room: string, amount?: number) {
+  const house = await getActiveHouse();
+  const [{ data: row }, { data: prevRow }, { data: roomRow }, { data: prices }] = await Promise.all([
+    sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", ky).eq("room", room).single(),
+    sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", prevKy(ky)).eq("room", room).maybeSingle(),
+    sb.from("nhatro_rooms").select("*").eq("house_id", house.id).eq("room", room).single(),
+    sb.from("nhatro_prices").select("*").eq("house_id", house.id),
+  ]);
+  if (!row) return { ok: false, error: "Không tìm thấy dữ liệu." };
+
+  const synced = applyRoomSync([row as MonthlyRow], (roomRow ? [roomRow] : []) as Room[])[0] as MonthlyRow;
+  const c = computeRow(house, pricesToMap(prices ?? []), synced, (prevRow ?? null) as MonthlyRow | null);
+  const receive = Math.min(amount ?? c.remain, c.remain);
+  if (c.remain <= 0) return { ok: false, error: "Không còn số tiền cần xác nhận." };
+  if (receive <= 0) return { ok: false, error: "Số tiền nhận phải lớn hơn 0." };
+
+  const oldPaid = Number(row.paid) || 0;
+  const newPaid = oldPaid + receive;
+  const newRemain = Math.max(0, c.total - newPaid);
+
+  const { error: updateErr } = await sb
+    .from("nhatro_monthly")
+    .update({ paid: newPaid })
+    .eq("id", row.id);
+  if (updateErr) return { ok: false, error: updateErr.message };
+
+  await logAudit(house.id, [{ ky, room, field: "paid", old_val: String(oldPaid), new_val: String(newPaid) }]);
+
+  let emailSent = false;
+  if (roomRow?.email) {
+    const key = process.env.RESEND_API_KEY;
+    const from = process.env.MAIL_FROM;
+    if (key && from) {
+      const sent = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from,
+          to: [roomRow.email],
+          cc: ["info@legaleader.com"],
+          subject: `Xác nhận thanh toán tiền trọ Phòng ${room} - Tháng ${displayKy(ky)}`,
+          html: buildConfirmHtml(house, c, ky, receive, newPaid, newRemain, oldPaid > 0),
+        }),
+      });
+      emailSent = sent.ok;
+    }
+  }
+
+  revalidatePath("/", "layout");
+  return { ok: true, paid: newPaid, remain: newRemain, emailSent };
+}
+
+export async function getAuditLogs(limit = 50, offset = 0, kyFilter?: string) {
+  const house = await getActiveHouse();
+  let query = sb
+    .from("nhatro_audit_log")
+    .select("*")
+    .eq("house_id", house.id)
+    .order("created_at", { ascending: false });
+  if (kyFilter) query = query.eq("ky", kyFilter);
+  let countQuery = sb
+    .from("nhatro_audit_log")
+    .select("*", { count: "exact", head: true })
+    .eq("house_id", house.id);
+  if (kyFilter) countQuery = countQuery.eq("ky", kyFilter);
+  const [{ data }, { count }] = await Promise.all([
+    query.range(offset, offset + limit - 1),
+    countQuery,
+  ]);
+  return { logs: data ?? [], total: count ?? 0 };
+}
+
+export type UserAccount = {
+  id: number;
+  email: string;
+  name: string;
+  is_admin: boolean;
+  created_at: string;
+  houseCount: number;
+};
+
+export async function listUsers(): Promise<UserAccount[]> {
+  const { data: users } = await sb.from("nhatro_users").select("*").order("id");
+  if (!users) return [];
+  const { data: houses } = await sb.from("nhatro_houses").select("owner_id");
+  const countByOwner = new Map<number, number>();
+  for (const h of (houses ?? []) as { owner_id: number | null }[]) {
+    if (h.owner_id != null) countByOwner.set(h.owner_id, (countByOwner.get(h.owner_id) ?? 0) + 1);
+  }
+  return (users as { id: number; email: string; name: string; is_admin: boolean; created_at: string }[]).map(
+    (u) => ({
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      is_admin: Boolean(u.is_admin),
+      created_at: u.created_at,
+      houseCount: countByOwner.get(u.id) ?? 0,
+    })
+  );
+}
+
+export async function changeOwnPassword(current: string, next: string): Promise<{ ok: boolean; error?: string }> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, error: "Chưa đăng nhập." };
+  if (next.length < 6) return { ok: false, error: "Mật khẩu mới phải có ít nhất 6 ký tự." };
+  const { data: rec } = await sb.from("nhatro_users").select("password_hash").eq("id", user.id).single();
+  if (!rec || !verifyPassword(current, (rec as { password_hash: string }).password_hash)) {
+    return { ok: false, error: "Mật khẩu hiện tại không đúng." };
+  }
+  await sb.from("nhatro_users").update({ password_hash: hashPassword(next) }).eq("id", user.id);
+  return { ok: true };
+}
+
+export async function adminResetPassword(userId: number, next: string): Promise<{ ok: boolean; error?: string }> {
+  const me = await getCurrentUser();
+  if (!me?.is_admin) return { ok: false, error: "Không có quyền." };
+  if (next.length < 6) return { ok: false, error: "Mật khẩu mới phải có ít nhất 6 ký tự." };
+  await sb.from("nhatro_users").update({ password_hash: hashPassword(next) }).eq("id", userId);
+  return { ok: true };
+}

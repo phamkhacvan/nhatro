@@ -1,8 +1,15 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8fafc;
+  --foreground: #0f172a;
+}
+
+.dark {
+  --background: #0b1220;
+  --foreground: #e2e8f0;
 }
 
 @theme inline {
@@ -12,15 +19,39 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: wait;
+}
+
+a {
+  cursor: pointer;
+}
+
+/* In phiếu: ẩn nút bấm, chỉ in nội dung phiếu trong 1 trang */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .phieu-card {
+    box-shadow: none !important;
+    border: 1px solid #e2e8f0 !important;
+  }
+  body {
+    background: #fff !important;
+  }
+}
+
+@page {
+  size: auto;
+  margin: 6mm 4mm;
 }
