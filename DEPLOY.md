@@ -1,37 +1,54 @@
-# Hướng dẫn deploy nhatro.legaleader.com
+# Hướng dẫn deploy nhatro (Vercel + Supabase)
 
-Ứng dụng quản lý tiền trọ (Next.js + Supabase Postgres), chạy trên Vercel,
-gắn subdomain `nhatro.legaleader.com` (legaleader.com đã dùng Vercel nên thêm domain rất dễ).
+Ứng dụng quản lý tiền trọ (Next.js + Supabase Postgres), chạy trên Vercel.
 
-## 1. Tạo Supabase (miễn phí)
-1. Vào https://supabase.com → Sign in → New project (miễn phí).
-2. Đặt tên bất kỳ (VD: nhatro), mật khẩu database, region gần (Singapore).
-3. Vào **SQL Editor**, dán toàn bộ nội dung file `supabase/seed.sql`, bấm **Run**.
-4. Vào **Settings → API**:
+## 1. Tạo & cấu hình Supabase (miễn phí)
+
+1. Vào https://supabase.com → Sign in → New project (region gần bạn, VD Singapore).
+2. Vào **SQL Editor**, chạy lần lượt:
+   - Toàn bộ nội dung `supabase/seed.sql`
+   - (Nếu là DB cũ nâng cấp lên multi-tenant) Toàn bộ nội dung `supabase/migrations/multi_tenant.sql`
+3. Vào **Settings → API**:
    - `Project URL` → điền vào `SUPABASE_URL`
    - `service_role` key → điền vào `SUPABASE_SERVICE_KEY`
-5. `ADMIN_PASSWORD` = mật khẩu đăng nhập app (tự đặt).
-6. `SESSION_SECRET` = một chuỗi dài bất kỳ (VD: dùng lệnh `openssl rand -hex 32`).
+
+Không cần bật Supabase Auth — app tự quản lý tài khoản (email + scrypt) và session JWT.
 
 ## 2. Deploy lên Vercel
+
 ```bash
 cd ~/nhatro
 vercel login                 # đăng nhập (mở browser)
 vercel link                  # tạo/link project
 vercel env add SUPABASE_URL          # nhập từng biến (Production)
 vercel env add SUPABASE_SERVICE_KEY
-vercel env add ADMIN_PASSWORD
-vercel env add SESSION_SECRET
+vercel env add SESSION_SECRET        # VD: openssl rand -hex 32
+vercel env add RESEND_API_KEY        # nếu dùng gửi email (Resend)
+vercel env add MAIL_FROM             # VD: noreply@ten-mien-cua-ban
+vercel env add ADMIN_NOTIFY_EMAIL    # (tùy chọn) nhận thông báo bảo mật
 vercel --prod
 ```
 
-## 3. Gắn subdomain
-1. Trên Vercel dashboard → project → **Settings → Domains** → Add: `nhatro.legaleader.com`.
-2. Vì nameserver của legaleader.com đang trỏ vercel-dns.com, Vercel **tự tạo DNS** cho subdomain — không cần đụng bên registrar.
-3. Sau khi status = Valid, mở https://nhatro.legaleader.com
+Ghi chú:
+- `SESSION_SECRET` bắt buộc, nếu thiếu app sẽ lỗi khi chạy (`Thiếu SESSION_SECRET`).
+- `RESEND_API_KEY`/`MAIL_FROM` bắt buộc nếu muốn gửi phiếu thu qua email (phải verify domain trên Resend).
+- `ADMIN_PASSWORD` đã **không còn dùng** — đăng nhập = email + mật khẩu đăng ký.
 
-## Chạy local (sau khi có Supabase)
+## 3. (Tùy chọn) Gắn subdomain
+
+1. Vercel dashboard → project → **Settings → Domains** → Add domain.
+2. Nếu nameserver đang trỏ `vercel-dns.com`, Vercel tự tạo DNS — không cần đụng registrar.
+3. Khi status = Valid, mở site.
+
+## Chạy local
+
 ```bash
 cp .env.local.example .env.local   # điền giá trị thật
+npm install
 npm run dev
 ```
+
+## Lưu ý multi-tenant
+
+- User **đầu tiên** đăng ký sẽ tự thành **admin** và được nhận toàn bộ nhà hiện có chưa có chủ (`owner_id IS NULL`).
+- Môi trường prod cần chắc chắn có ít nhất 1 user admin để quản lý tài khoản khác.
