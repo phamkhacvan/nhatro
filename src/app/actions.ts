@@ -289,7 +289,7 @@ async function healMonthIntegrity(houseId: number, curKy: string | null): Promis
         .update({ old_index: String(cOld), new_index: chot, close_date: c.close_date, move_in: p.move_in })
         .eq("house_id", houseId).eq("ky", prev).eq("room", p.room),
       sb.from("nhatro_monthly")
-        .update({ old_index: chot, new_index: null, close_date: null })
+        .update({ old_index: chot, old_date: c.close_date, new_index: null, close_date: null })
         .eq("house_id", houseId).eq("ky", real).eq("room", p.room),
     ]);
   }
@@ -342,6 +342,7 @@ async function ensureMonth(ky: string, houseId: number): Promise<void> {
     if (room.move_in && room.move_in.slice(0, 7) > ky) continue;
     const p = prevMap.get(room.room);
     const old_index = p ? (p.new_index ?? p.old_index) : null;
+    const old_date = p ? (p.close_date ?? null) : null;
     rows.push({
       house_id: houseId,
       ky,
@@ -350,6 +351,7 @@ async function ensureMonth(ky: string, houseId: number): Promise<void> {
       phone: room.phone,
       occupancy: room.occupancy,
       old_index,
+      old_date,
       new_index: null,
       close_date: null,
       move_in: room.move_in ?? null,
@@ -388,6 +390,7 @@ export async function saveMonth(ky: string, rows: MonthlyRow[]) {
       phone: phoneMap.get(r.room) ?? r.phone,
       occupancy: occMap.get(r.room) ?? (Number(r.occupancy) || 0),
       old_index: r.old_index ?? null,
+      old_date: r.old_date ?? null,
       new_index: ni == null || ni === "" ? null : Number(ni),
       close_date: ci == null || ci === "" ? null : ci,
       move_in: mi == null || mi === "" ? null : mi,
@@ -399,7 +402,7 @@ export async function saveMonth(ky: string, rows: MonthlyRow[]) {
     };
   });
 
-  const fieldsToTrack: (keyof MonthlyRow)[] = ["new_index", "close_date", "move_in", "move_out", "nights", "violations", "paid"];
+  const fieldsToTrack: (keyof MonthlyRow)[] = ["old_date", "new_index", "close_date", "move_in", "move_out", "nights", "violations", "paid"];
   const auditEntries: { ky?: string; room: string; field: string; old_val: string; new_val: string }[] = [];
   for (const u of upserts) {
     const old = existMap.get(u.room);
@@ -421,7 +424,7 @@ export async function saveMonth(ky: string, rows: MonthlyRow[]) {
     const nextOldIndex = u.new_index ?? u.old_index ?? null;
     await sb
       .from("nhatro_monthly")
-      .update({ old_index: nextOldIndex })
+      .update({ old_index: nextOldIndex, old_date: u.close_date ?? null })
       .eq("house_id", house.id)
       .eq("ky", next)
       .eq("room", u.room);
@@ -788,6 +791,7 @@ const old_index = p ? (p.new_index ?? p.old_index) : null;
         phone: room.phone,
         occupancy: Number(room.occupancy) || 0,
         old_index,
+        old_date: p ? (p.close_date ?? null) : null,
         new_index: null,
         close_date: null,
         move_in: room.move_in ?? null,

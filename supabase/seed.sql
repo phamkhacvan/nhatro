@@ -106,6 +106,7 @@ create table if not exists nhatro_monthly (
   phone text default '',
   occupancy int default 1,
   old_index numeric default 0,
+  old_date date,
   new_index numeric,
   close_date date,
   move_in date,

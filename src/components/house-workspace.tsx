@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { House } from "@/lib/types";
 import { dataForKy, settingsData, getAuditLogs } from "@/app/actions";
@@ -50,9 +50,12 @@ function BangTinhTab({ ky, onOpen, initial }: { ky: string; onOpen: (k: string) 
   const [data, setData] = useState<MonthData | null>(
     initial && initial.house && initial.house.cur_ky === ky && initial.rows.length > 0 ? initial : null
   );
+  const reqKyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (data?.house?.cur_ky === ky && data.rows.length > 0) return;
+    if (reqKyRef.current === ky && data) return;
+    reqKyRef.current = ky;
+    setData(null);
     let live = true;
     dataForKy(ky).then((d) => {
       if (live) setData(d);

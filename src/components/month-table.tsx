@@ -16,6 +16,7 @@ type Draft = {
   phone: string;
   occupancy: string;
   old_index: string;
+  old_date: string;
   new_index: string;
   close_date: string;
   move_in: string;
@@ -34,6 +35,7 @@ function toDraft(r: MonthlyRow): Draft {
     phone: r.phone,
     occupancy: String(r.occupancy ?? 0),
     old_index: r.old_index == null ? "" : String(r.old_index),
+    old_date: isoToVi(r.old_date),
     new_index: r.new_index == null ? "" : String(r.new_index),
     close_date: isoToVi(r.close_date),
     move_in: isoToVi(r.move_in),
@@ -54,6 +56,7 @@ function toRow(ky: string, d: Draft): MonthlyRow {
     phone: d.phone,
     occupancy: Number(d.occupancy) || 0,
     old_index: d.old_index === "" ? null : Number(d.old_index),
+    old_date: viToIso(d.old_date),
     new_index: d.new_index === "" ? null : Number(d.new_index),
     close_date: viToIso(d.close_date),
     move_in: viToIso(d.move_in),
@@ -68,7 +71,7 @@ function toRow(ky: string, d: Draft): MonthlyRow {
 
 type SortKey =
   | "room" | "tenant" | "phone" | "occupancy"
-  | "old_index" | "new_index" | "close_date" | "kwh"
+  | "old_index" | "old_date" | "new_index" | "close_date" | "kwh"
   | "move_in" | "move_out"
   | "rent" | "water" | "wifi" | "elec" | "penalty"
   | "total" | "paid" | "remain";
@@ -114,6 +117,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
       if (
         o.occupancy !== ed.occupancy ||
         o.old_index !== ed.old_index ||
+        o.old_date !== ed.old_date ||
         o.new_index !== ed.new_index ||
         o.close_date !== ed.close_date ||
         o.move_in !== ed.move_in ||
@@ -198,6 +202,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
       occupancy: (it) => Number(it.d.occupancy) || 0,
       old_index: (it) =>
         it.d.old_index === "" ? -1 : Number(it.d.old_index),
+      old_date: (it) => it.d.old_date,
       new_index: (it) => Number(it.d.new_index) || 0,
       close_date: (it) => it.d.close_date,
       kwh: (it) => it.c.kwh ?? -1,
@@ -264,6 +269,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
     const data = next ?? editing;
     const bad = data.find(
       (d) =>
+        (d.old_date !== "" && !viToIso(d.old_date)) ||
         (d.close_date !== "" && !viToIso(d.close_date)) ||
         (d.move_in !== "" && !viToIso(d.move_in)) ||
         (d.move_out !== "" && !viToIso(d.move_out))
@@ -411,7 +417,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
               <th colSpan={3} className={cellCls}>
                 Khách
               </th>
-              <th colSpan={4} className={cellCls + " text-center"}>
+              <th colSpan={5} className={cellCls + " text-center"}>
                 Điện
               </th>
               <th colSpan={2} className={cellCls + " text-center"}>
@@ -432,8 +438,9 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
               {thSort("phone", "SĐT")}
               {thSort("occupancy", "Số người", cellCls + " text-center")}
               {thSort("old_index", "Số điện cũ", numCls)}
+              {thSort("old_date", "Ngày chốt số cũ")}
               {thSort("new_index", "Số điện mới", numCls)}
-              {thSort("close_date", "Ngày chốt số điện")}
+              {thSort("close_date", "Ngày chốt số mới")}
               {thSort("kwh", "kWh", numCls)}
               {thSort("move_in", "Ở từ ngày")}
               {thSort("move_out", "Ở đến ngày")}
@@ -450,7 +457,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
           <tbody>
             {items.length === 0 && (
               <tr>
-                <td colSpan={19} className="px-4 py-8 text-center text-sm text-slate-400">
+                <td colSpan={20} className="px-4 py-8 text-center text-sm text-slate-400">
                   Không có phòng nào khớp tìm kiếm.
                 </td>
               </tr>
@@ -490,6 +497,18 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                       className={inputCls}
                       placeholder={prevMap.has(d.room) ? "kWh" : "số lúc nhận phòng"}
                       title="Số điện cũ: có thể sửa (vd số công tơ lúc nhận phòng nếu mới vào ở giữa tháng)"
+                    />
+                  </td>
+                  <td className={cellCls}>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={10}
+                      value={d.old_date}
+                      onChange={(e) => set(d, "old_date", maskDate(e.target.value))}
+                      className={dateCls}
+                      placeholder="dd/mm/yyyy"
+                      title="Ngày chốt số điện cũ (ngày ghi nhận chỉ số đứng trước)"
                     />
                   </td>
                   <td className={cellCls}>
@@ -613,7 +632,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-slate-200 bg-slate-50 font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200">
-              <td className={cellCls} colSpan={10}>
+              <td className={cellCls} colSpan={11}>
                 TỔNG CỘNG
               </td>
               <td className={moneyCls}>{fmt(sum((c) => c.rent))}</td>
@@ -629,7 +648,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
               <td className={cellCls}></td>
             </tr>
             <tr className="h-6 bg-white dark:bg-slate-900">
-              <td className="border-0" colSpan={19}></td>
+              <td className="border-0" colSpan={20}></td>
             </tr>
           </tfoot>
         </table>
@@ -693,6 +712,18 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                 />
               </div>
               <div>
+                <label className={labelCls}>Ngày chốt số cũ</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={10}
+                  value={d.old_date}
+                  onChange={(e) => set(d, "old_date", maskDate(e.target.value))}
+                  className={dateCls + " w-full"}
+                  placeholder="dd/mm/yyyy"
+                />
+              </div>
+              <div>
                 <label className={labelCls}>Số điện mới</label>
                 <input
                   type="number"
@@ -703,7 +734,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                 />
               </div>
               <div>
-                <label className={labelCls}>Ngày chốt điện</label>
+                <label className={labelCls}>Ngày chốt số mới</label>
                 <input
                   type="text"
                   inputMode="numeric"

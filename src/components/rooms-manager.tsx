@@ -244,7 +244,7 @@ export default function RoomsManager({
 
       <div className="space-y-4">
         {list.map((r, i) => (
-          <div key={i} className="rounded-lg border border-slate-100 p-2 dark:border-slate-800">
+          <div key={i} className="rounded-xl border-2 border-slate-300 bg-slate-50/60 p-3 dark:border-slate-600 dark:bg-slate-800/40">
             <div className="grid grid-cols-[64px_1fr_1fr_1fr_58px_100px_122px_122px_122px_115px_130px_36px] items-end gap-2">
             <div>
               <label className={label}>Phòng</label>

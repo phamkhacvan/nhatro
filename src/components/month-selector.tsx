@@ -1,7 +1,5 @@
 "use client";
 
-import { useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { setCurrentMonth } from "@/app/actions";
 import { parseKy, formatKy } from "@/lib/calc";
 
@@ -16,8 +14,6 @@ export default function MonthSelector({
   minKy?: string | null;
   onSelect?: (ky: string) => void;
 }) {
-  const router = useRouter();
-  const [pending, start] = useTransition();
   const { m, y } = parseKy(ky);
   const now = new Date();
   const realYear = now.getFullYear();
@@ -29,18 +25,14 @@ export default function MonthSelector({
 
   function go(mm: number, yy: number) {
     const nk = formatKy(mm, yy);
-    if (nk === ky || pending) return;
+    if (nk === ky) return;
     if (minKy && nk < minKy) return;
     if (nk > formatKy(realMonth, realYear)) return;
     if (setCurrent && nk > ky) setCurrentMonth(nk).catch(() => {});
     if (onSelect) {
-      start(() => onSelect(nk));
+      onSelect(nk);
       return;
     }
-    start(() => {
-      router.push(`/thang/${nk}`);
-      router.refresh();
-    });
   }
 
   function blocked(mm: number, yy: number) {
@@ -56,7 +48,6 @@ export default function MonthSelector({
       <select
         value={mm}
         onChange={(e) => go(Number(e.target.value), y)}
-        disabled={pending}
         className="rounded border border-slate-300 bg-white px-2 py-1 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
       >
         {Array.from({ length: maxMonthFor(y) }, (_, i) => i + 1).map((n) => (
@@ -69,7 +60,6 @@ export default function MonthSelector({
       <select
         value={y}
         onChange={(e) => go(mm, Number(e.target.value))}
-        disabled={pending}
         className="rounded border border-slate-300 bg-white px-2 py-1 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
       >
         {years.map((yy) => (
@@ -78,7 +68,6 @@ export default function MonthSelector({
           </option>
         ))}
       </select>
-      {pending && <span className="text-xs text-slate-400">Đang chuyển...</span>}
     </div>
   );
 }

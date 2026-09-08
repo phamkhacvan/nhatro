@@ -78,6 +78,7 @@ export type MonthlyRow = {
   occupation?: string | null;
   occupancy: number;
   old_index: number | null;
+  old_date: string | null;
   new_index: number | null;
   close_date: string | null;
   move_in: string | null;
