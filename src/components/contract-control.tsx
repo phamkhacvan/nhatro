@@ -41,9 +41,11 @@ export default function ContractControl({
       showToast("error", "File phải từ 1 byte đến 4MB.");
       return;
     }
-    const ok = /^(application\/pdf|image\/(jpeg|png|webp))$/.test(file.type);
+    const ok = /^(application\/pdf|image\/(jpeg|png|webp)|application\/msword|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document)$/.test(
+      file.type
+    );
     if (!ok) {
-      showToast("error", "Chỉ hỗ trợ PDF, JPG, PNG, WEBP.");
+      showToast("error", "Chỉ hỗ trợ PDF, Word (.doc/.docx), JPG, PNG, WEBP.");
       return;
     }
     const fd = new FormData();
@@ -79,7 +81,7 @@ export default function ContractControl({
       <input
         ref={fileRef}
         type="file"
-        accept=".pdf,.jpg,.jpeg,.png,.webp"
+        accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx"
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0] ?? null;
@@ -120,7 +122,7 @@ export default function ContractControl({
           >
             {pending ? "Đang tải..." : "＋ Tải hợp đồng"}
           </button>
-          <span className="text-xs text-slate-400">PDF/JPG/PNG · tối đa 4MB</span>
+          <span className="text-xs text-slate-400">PDF/Word/JPG/PNG · tối đa 4MB</span>
         </>
       )}
     </div>

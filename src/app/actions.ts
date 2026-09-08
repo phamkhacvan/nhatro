@@ -629,7 +629,14 @@ export async function upsertRooms(rooms: Room[]) {
   return { ok: true };
 }
 
-const ALLOWED_CONTRACT_MIME = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+const ALLOWED_CONTRACT_MIME = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+];
 const MAX_CONTRACT_SIZE = 4 * 1024 * 1024; // 4MB
 
 export async function uploadContract(room: string, formData: FormData): Promise<{ ok: boolean; error?: string }> {
@@ -639,7 +646,7 @@ export async function uploadContract(room: string, formData: FormData): Promise<
     return { ok: false, error: "Chưa chọn file." };
   }
   if (!ALLOWED_CONTRACT_MIME.includes(file.type)) {
-    return { ok: false, error: "Chỉ hỗ trợ PDF, JPG, PNG, WEBP." };
+    return { ok: false, error: "Chỉ hỗ trợ PDF, Word (.doc/.docx), JPG, PNG, WEBP." };
   }
   if (file.size === 0 || file.size > MAX_CONTRACT_SIZE) {
     return { ok: false, error: "File phải từ 1 byte đến 4MB." };
