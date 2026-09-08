@@ -1,7 +1,6 @@
 "use client";
 
 import { ReactNode, useState, useEffect, useRef, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import { House, MonthlyRow } from "@/lib/types";
 import { computeRow, fmt, displayKy, penaltyFor, nextKy, prevKy, prorate, parseKy, isoToVi, viToIso, maskDate, formatThousand, parseThousand } from "@/lib/calc";
 import { saveMonth } from "@/app/actions";
@@ -85,10 +84,10 @@ type Props = {
   prevRows?: MonthlyRow[];
   minKy?: string | null;
   onSelectMonth?: (ky: string) => void;
+  onSaved?: () => void;
 };
 
-export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRows = [], minKy = null, onSelectMonth }: Props) {
-  const router = useRouter();
+export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRows = [], minKy = null, onSelectMonth, onSaved }: Props) {
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(rows.map(toDraft));
   const [pen, setPen] = useState<{ i: number; nights: string; violations: string; guest: boolean } | null>(null);
@@ -291,10 +290,9 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
             resolve(false);
           } else {
             showToast("success", "Lưu thành công");
-            setEditing(data.map((d) => toDraft(toRow(ky, d))));
             setDirty(false);
-            router.refresh();
             resolve(true);
+            onSaved?.();
           }
         })
         .catch((err) => {

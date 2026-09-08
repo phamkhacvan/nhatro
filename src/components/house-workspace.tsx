@@ -65,6 +65,11 @@ function BangTinhTab({ ky, onOpen, initial }: { ky: string; onOpen: (k: string) 
     };
   }, [ky, data]);
 
+  function reload() {
+    setData(null);
+    dataForKy(ky).then((d) => setData(d));
+  }
+
   if (!data?.house) return <TableSkeleton />;
   return (
     <MonthTable
@@ -77,6 +82,7 @@ function BangTinhTab({ ky, onOpen, initial }: { ky: string; onOpen: (k: string) 
       prevRows={data.prevRows}
       minKy={data.minKy}
       onSelectMonth={onOpen}
+      onSaved={reload}
     />
   );
 }
