@@ -6,6 +6,7 @@ import { Room } from "@/lib/types";
 import { getRoomInfo, upsertRooms } from "@/app/actions";
 import { isoToVi, viToIso, maskDate, formatThousand, parseThousand } from "@/lib/calc";
 import { showToast } from "@/components/toast";
+import ContractControl from "@/components/contract-control";
 
 const input =
   "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-indigo-400";
@@ -13,39 +14,59 @@ const label = "mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300
 
 type Draft = Omit<Room, "house_id" | "initial_index"> & { initial_index: string };
 
+function draftKey(d: Draft): string {
+  return JSON.stringify({
+    room: d.room.trim(),
+    tenant: d.tenant || "",
+    phone: d.phone || "",
+    occupancy: Number(d.occupancy) || 0,
+    washing_machine: Boolean(d.washing_machine),
+    move_in: d.move_in || "",
+    contract_end: d.contract_end || "",
+    tam_tru_date: d.tam_tru_date || "",
+    email: d.email?.trim() || null,
+    deposit: formatThousand(String(d.deposit ?? 0)),
+    deposit_date: d.deposit_date || "",
+  });
+}
+
 export default function RoomInfoModal({ room, onClose }: { room: string; onClose: () => void }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [draft, setDraft] = useState<Draft | null | "loading">("loading");
+  const [savedSnap, setSavedSnap] = useState<string | null>(null);
+  const dirty = draft !== null && draft !== "loading" && savedSnap !== null && savedSnap !== draftKey(draft);
 
   useEffect(() => {
     let live = true;
     const startedAt = Date.now();
     const MIN_MS = 400;
     getRoomInfo(room).then((res) => {
-      const apply = () => {
-        if (!live) return;
-        if (!res.ok || !res.room) {
-          setDraft(null);
-          return;
-        }
-        setDraft({
-          room: res.room.room,
-          tenant: res.room.tenant,
-          phone: res.room.phone,
-          email: res.room.email,
-          occupancy: res.room.occupancy,
-          move_in: isoToVi(res.room.move_in),
-          contract_end: isoToVi(res.room.contract_end),
-          tam_tru_date: isoToVi(res.room.tam_tru_date),
-          deposit: res.room.deposit,
-          deposit_date: isoToVi(res.room.deposit_date),
-          washing_machine: res.room.washing_machine,
-          active: res.room.active,
-          initial_index:
-            res.room.initial_index == null ? "" : String(res.room.initial_index),
-        });
-      };
+const apply = () => {
+          if (!live) return;
+          if (!res.ok || !res.room) {
+            setDraft(null);
+            return;
+          }
+          const d: Draft = {
+            room: res.room.room,
+            tenant: res.room.tenant,
+            phone: res.room.phone,
+            email: res.room.email,
+            occupancy: res.room.occupancy,
+            move_in: isoToVi(res.room.move_in),
+            contract_end: isoToVi(res.room.contract_end),
+            tam_tru_date: isoToVi(res.room.tam_tru_date),
+            deposit: res.room.deposit,
+            deposit_date: isoToVi(res.room.deposit_date),
+            washing_machine: res.room.washing_machine,
+            active: res.room.active,
+            initial_index:
+              res.room.initial_index == null ? "" : String(res.room.initial_index),
+          };
+          setSavedSnap(draftKey(d));
+          setDraft(d);
+        };
       const elapsed = Date.now() - startedAt;
       if (elapsed < MIN_MS) setTimeout(apply, MIN_MS - elapsed);
       else apply();
@@ -97,6 +118,7 @@ export default function RoomInfoModal({ room, onClose }: { room: string; onClose
       if (!res.ok) showToast("error", res.error || "Lưu thất bại.");
       else {
         showToast("success", "Đã lưu thông tin phòng");
+        setSavedSnap(draftKey(draft));
         router.refresh();
         onClose();
       }
@@ -128,6 +150,7 @@ export default function RoomInfoModal({ room, onClose }: { room: string; onClose
         ) : draft === null ? (
           <p className="py-8 text-center text-sm text-slate-500">Không có thông tin phòng này. Hãy nhập trong phần Cài đặt → Quản lý phòng.</p>
         ) : (
+          <>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={label}>Người thuê</label>
@@ -202,6 +225,14 @@ export default function RoomInfoModal({ room, onClose }: { room: string; onClose
               </label>
             </div>
           </div>
+
+          <div className="mt-4 rounded-lg border border-dashed border-slate-200 p-3 dark:border-slate-700">
+            <p className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+              Hợp đồng phòng {room}
+            </p>
+            <ContractControl room={room} />
+          </div>
+          </>
         )}
 
         {draft && draft !== "loading" && (
@@ -214,7 +245,7 @@ export default function RoomInfoModal({ room, onClose }: { room: string; onClose
             </button>
             <button
               onClick={save}
-              disabled={pending}
+              disabled={pending || !dirty}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-200 transition hover:bg-indigo-500 disabled:opacity-50"
             >
               {pending ? "Đang lưu..." : "Lưu thay đổi"}

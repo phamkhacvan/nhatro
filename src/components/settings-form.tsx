@@ -12,6 +12,13 @@ const label = "mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300
 const input =
   "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-indigo-400";
 
+function sKey(s: Record<string, string>, p: { occupancy: number; price: string }[]): string {
+  return JSON.stringify({
+    ...s,
+    prices: p.map((x) => [x.occupancy, x.price]),
+  });
+}
+
 export default function SettingsForm({
   house,
   prices,
@@ -35,6 +42,21 @@ export default function SettingsForm({
       return { occupancy: o, price: found ? formatThousand(String(found.price)) : "0" };
     });
   });
+  const [savedSnap, setSavedSnap] = useState<string>(() => {
+    const initS = {
+      ...(house as unknown as Record<string, string>),
+      elec_rate: formatThousand(String(house.elec_rate ?? 0)),
+      water_rate: formatThousand(String(house.water_rate ?? 0)),
+      wifi_rate: formatThousand(String(house.wifi_rate ?? 0)),
+    };
+    const initP = [1, 2].map((o) => {
+      const found = prices.find((x) => x.occupancy === o);
+      return { occupancy: o, price: found ? formatThousand(String(found.price)) : "0" };
+    });
+    return sKey(initS, initP);
+  });
+
+  const dirty = savedSnap !== sKey(s, p);
 
   useEffect(() => {
     let live = true;
@@ -73,6 +95,7 @@ export default function SettingsForm({
         showToast("error", "Lưu thất bại: " + (reason || "lỗi không xác định"));
       } else {
         showToast("success", "Lưu thành công");
+        setSavedSnap(sKey(s, p));
         router.refresh();
       }
     });
@@ -199,10 +222,10 @@ export default function SettingsForm({
 
       <button
         type="submit"
-        disabled={pending}
+        disabled={pending || !dirty}
         className="w-40 rounded-lg bg-blue-900 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-50 dark:bg-indigo-600 dark:hover:bg-indigo-500"
       >
-        {pending ? "Đang lưu..." : "Lưu"}
+        {pending ? "Đang lưu..." : dirty ? "Lưu" : "Đã lưu"}
       </button>
     </form>
   );

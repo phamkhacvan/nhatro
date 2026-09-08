@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 export default async function CaiDatPage() {
   const data = await settingsData();
-  const { house, prices, rooms, me, users } = data;
+  const { house, prices, rooms, contracts, me, users } = data;
 
   if (!house) return <p className="text-sm text-slate-500">Chưa có nhà trọ nào.</p>;
 
@@ -16,6 +16,7 @@ export default async function CaiDatPage() {
         house={house}
         prices={prices}
         rooms={rooms}
+        contracts={contracts}
         me={me ?? { id: 0, email: "", name: "", is_admin: false }}
         users={users}
       />

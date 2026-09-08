@@ -11,12 +11,14 @@ export default function CaiDatTabs({
   house,
   prices,
   rooms,
+  contracts,
   me,
   users,
 }: {
   house: House;
   prices: { occupancy: number; price: number }[];
   rooms: import("@/lib/types").Room[];
+  contracts: Record<string, import("@/lib/types").ContractMeta>;
   me: { id: number; email: string; name: string; is_admin: boolean };
   users: UserAccount[];
 }) {
@@ -44,7 +46,7 @@ export default function CaiDatTabs({
       {tab === "house" ? (
         <SettingsForm house={house} prices={prices} />
       ) : tab === "rooms" ? (
-        <RoomsManager rooms={rooms} />
+        <RoomsManager rooms={rooms} contracts={contracts} />
       ) : (
         <AccountManager me={me} initialUsers={users} />
       )}

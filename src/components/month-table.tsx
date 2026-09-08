@@ -962,7 +962,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
             <div className="mt-5 flex flex-col gap-2">
               <button
                 onClick={saveTabAndClose}
-                disabled={tabSaving}
+                disabled={tabSaving || !dirty}
                 className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
               >
                 {tabSaving ? "Đang lưu..." : "💾 Lưu thay đổi"}

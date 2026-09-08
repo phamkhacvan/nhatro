@@ -410,6 +410,7 @@ export default function HouseWorkspace({
             house={settings.house}
             prices={settings.prices}
             rooms={settings.rooms}
+            contracts={settings.contracts}
             me={
               settings.me ?? { id: 0, email: "", name: "", is_admin: false }
             }
@@ -429,7 +430,7 @@ export default function HouseWorkspace({
             <div className="mt-5 flex flex-col gap-2">
               <button
                 onClick={confirmSave}
-                disabled={saveLoading}
+                disabled={saveLoading || !dirty}
                 className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
               >
                 {saveLoading ? "Đang lưu..." : "💾 Lưu thay đổi"}

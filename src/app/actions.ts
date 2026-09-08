@@ -12,7 +12,7 @@ import { sb } from "@/lib/supabase";
 import { STATIC_BANKS, Bank } from "@/lib/banks";
 import { SESSION_COOKIE, signSession } from "@/lib/auth";
 import { getCurrentUser, hashPassword, verifyPassword, SessionUser } from "@/lib/auth-server";
-import { House, MonthlyRow, Room, ComputedRow } from "@/lib/types";
+import { House, MonthlyRow, Room, ComputedRow, ContractMeta } from "@/lib/types";
 import { prevKy, nextKy, computeRows, pricesToMap, applyRoomSync, displayKy, fmt, computeRow, vietQrLocalUrl, fmtDateVi, utilNote } from "@/lib/calc";
 
 async function logAudit(houseId: number, entries: { ky?: string; room?: string; field: string; old_val: string; new_val: string }[]) {
@@ -528,12 +528,32 @@ export async function upsertRooms(rooms: Room[]) {
       return { ok: false, error: `Phòng ${r.room}: Ngày kết thúc HĐ phải sau ngày vào ở.` };
     }
   }
+  const { error: roomErr } = await sb.from("nhatro_rooms").upsert(
+    rooms.map((r) => ({
+      house_id: house.id,
+      room: r.room,
+      tenant: r.tenant,
+      phone: r.phone,
+      occupancy: Number(r.occupancy) || 0,
+      move_in: r.move_in || null,
+      contract_end: r.contract_end || null,
+      tam_tru_date: r.tam_tru_date || null,
+      email: r.email || null,
+      deposit: Number(r.deposit) || 0,
+      deposit_date: r.deposit_date || null,
+      washing_machine: Boolean(r.washing_machine),
+      active: r.active ?? true,
+    })),
+    { onConflict: "house_id,room" }
+  );
+  if (roomErr) return { ok: false, error: roomErr.message };
+
   const { data: monthRows } = await sb
     .from("nhatro_monthly")
     .select("ky,room,move_in,move_out,occupancy,tenant,phone")
     .eq("house_id", house.id);
-  const monthsByRoom = new Map<string, { ky: string }[]>();
-  for (const r of (monthRows ?? []) as { room: string; ky: string }[]) {
+  const monthsByRoom = new Map<string, { ky: string; move_in: string | null; move_out: string | null; occupancy: number; tenant: string; phone: string }[]>();
+  for (const r of (monthRows ?? []) as { room: string; ky: string; move_in: string | null; move_out: string | null; occupancy: number; tenant: string; phone: string }[]) {
     const arr = monthsByRoom.get(r.room) ?? [];
     arr.push(r);
     monthsByRoom.set(r.room, arr);
@@ -558,41 +578,28 @@ export async function upsertRooms(rooms: Room[]) {
         if (ov !== nv) auditEntries.push({ room: r.room, field, old_val: ov, new_val: nv });
       }
     }
-    const { error } = await sb
-      .from("nhatro_rooms")
-      .upsert(
-        {
-          house_id: house.id,
-          room: r.room,
-          tenant: r.tenant,
-          phone: r.phone,
-          occupancy: Number(r.occupancy) || 0,
-          move_in: r.move_in || null,
-          contract_end: r.contract_end || null,
-          tam_tru_date: r.tam_tru_date || null,
-          email: r.email || null,
-          deposit: Number(r.deposit) || 0,
-          deposit_date: r.deposit_date || null,
-          washing_machine: Boolean(r.washing_machine),
-          active: r.active ?? true,
-        },
-        { onConflict: "house_id,room" }
-      );
-    if (error) return { ok: false, error: error.message };
-    for (const k of monthsByRoom.get(r.room) ?? []) {
-      const { data: existingMonthRow } = await sb
-        .from("nhatro_monthly")
-        .select("move_in, move_out")
-        .eq("house_id", house.id)
-        .eq("ky", k.ky)
-        .eq("room", r.room)
-        .single();
-      const newMoveIn = r.move_in || null;
-      const newMoveOut = r.contract_end || null;
-      const oldMoveIn = existingMonthRow?.move_in ?? null;
-      const oldMoveOut = existingMonthRow?.move_out ?? null;
-      if (oldMoveIn !== newMoveIn) auditEntries.push({ ky: k.ky, room: r.room, field: "move_in", old_val: oldMoveIn ?? "", new_val: newMoveIn ?? "" });
-      if (oldMoveOut !== newMoveOut) auditEntries.push({ ky: k.ky, room: r.room, field: "move_out", old_val: oldMoveOut ?? "", new_val: newMoveOut ?? "" });
+    const newMoveIn = r.move_in || null;
+    const newMoveOut = r.contract_end || null;
+    const newTenant = r.tenant ?? "";
+    const newPhone = r.phone ?? "";
+    const newOcc = Number(r.occupancy) || 0;
+    const changedKys: string[] = [];
+    for (const m of monthsByRoom.get(r.room) ?? []) {
+      const oldMoveIn = m.move_in ?? null;
+      const oldMoveOut = m.move_out ?? null;
+      if (
+        oldMoveIn !== newMoveIn ||
+        oldMoveOut !== newMoveOut ||
+        m.tenant !== newTenant ||
+        m.phone !== newPhone ||
+        Number(m.occupancy) !== newOcc
+      ) {
+        changedKys.push(m.ky);
+        if (oldMoveIn !== newMoveIn) auditEntries.push({ ky: m.ky, room: r.room, field: "move_in", old_val: oldMoveIn ?? "", new_val: newMoveIn ?? "" });
+        if (oldMoveOut !== newMoveOut) auditEntries.push({ ky: m.ky, room: r.room, field: "move_out", old_val: oldMoveOut ?? "", new_val: newMoveOut ?? "" });
+      }
+    }
+    if (changedKys.length > 0) {
       await sb
         .from("nhatro_monthly")
         .update({
@@ -600,29 +607,108 @@ export async function upsertRooms(rooms: Room[]) {
           move_out: newMoveOut,
           tenant: r.tenant,
           phone: r.phone,
-          occupancy: Number(r.occupancy) || 0,
+          occupancy: newOcc,
         })
         .eq("house_id", house.id)
-        .eq("ky", k.ky)
-        .eq("room", r.room);
+        .eq("room", r.room)
+        .in("ky", changedKys);
     }
     const initial = r.initial_index == null ? null : Number(r.initial_index);
     const miKy = r.move_in ? r.move_in.slice(0, 7) : null;
     if (initial != null && miKy) {
-      for (const k of monthsByRoom.get(r.room) ?? []) {
-        if (k.ky !== miKy) continue;
-        await sb
-          .from("nhatro_monthly")
-          .update({ old_index: initial })
-          .eq("house_id", house.id)
-          .eq("ky", k.ky)
-          .eq("room", r.room);
-      }
+      await sb
+        .from("nhatro_monthly")
+        .update({ old_index: initial })
+        .eq("house_id", house.id)
+        .eq("ky", miKy)
+        .eq("room", r.room);
     }
   }
   if (auditEntries.length > 0) await logAudit(house.id, auditEntries);
   revalidatePath("/", "layout");
   return { ok: true };
+}
+
+const ALLOWED_CONTRACT_MIME = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+const MAX_CONTRACT_SIZE = 4 * 1024 * 1024; // 4MB
+
+export async function uploadContract(room: string, formData: FormData): Promise<{ ok: boolean; error?: string }> {
+  const house = await getActiveHouse();
+  const file = formData.get("file");
+  if (!(file instanceof File)) {
+    return { ok: false, error: "Chưa chọn file." };
+  }
+  if (!ALLOWED_CONTRACT_MIME.includes(file.type)) {
+    return { ok: false, error: "Chỉ hỗ trợ PDF, JPG, PNG, WEBP." };
+  }
+  if (file.size === 0 || file.size > MAX_CONTRACT_SIZE) {
+    return { ok: false, error: "File phải từ 1 byte đến 4MB." };
+  }
+  const { data: roomRow } = await sb
+    .from("nhatro_rooms")
+    .select("room")
+    .eq("house_id", house.id)
+    .eq("room", room)
+    .maybeSingle();
+  if (!roomRow) {
+    return { ok: false, error: `Không có phòng ${room}.` };
+  }
+  const { data: oldDoc } = await sb
+    .from("nhatro_contracts")
+    .select("file_name")
+    .eq("house_id", house.id)
+    .eq("room", room)
+    .maybeSingle();
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const data = bytes.toString("base64");
+  const { error } = await sb.from("nhatro_contracts").upsert(
+    { house_id: house.id, room, file_name: file.name, mime: file.type, size: file.size, data },
+    { onConflict: "house_id,room" }
+  );
+  if (error) return { ok: false, error: error.message };
+  await logAudit(house.id, [{ room, field: "contract", old_val: oldDoc?.file_name ?? "", new_val: file.name }]);
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+export async function deleteContract(room: string): Promise<{ ok: boolean; error?: string }> {
+  const house = await getActiveHouse();
+  const { data: oldDoc } = await sb
+    .from("nhatro_contracts")
+    .select("file_name")
+    .eq("house_id", house.id)
+    .eq("room", room)
+    .maybeSingle();
+  if (oldDoc) {
+    const { error } = await sb.from("nhatro_contracts").delete().eq("house_id", house.id).eq("room", room);
+    if (error) return { ok: false, error: error.message };
+    await logAudit(house.id, [{ room, field: "contract", old_val: oldDoc.file_name, new_val: "" }]);
+    revalidatePath("/", "layout");
+    return { ok: true };
+  }
+  return { ok: true };
+}
+
+export async function getContractMeta(room: string): Promise<ContractMeta | null> {
+  const house = await getActiveHouse();
+  const { data } = await sb
+    .from("nhatro_contracts")
+    .select("file_name, mime, size")
+    .eq("house_id", house.id)
+    .eq("room", room)
+    .maybeSingle();
+  if (!data) return null;
+  return { file_name: data.file_name as string, mime: data.mime as string, size: Number(data.size) };
+}
+
+export async function getAllContractMetas(): Promise<Record<string, ContractMeta>> {
+  const house = await getActiveHouse();
+  const { data } = await sb.from("nhatro_contracts").select("room, file_name, mime, size").eq("house_id", house.id);
+  const map: Record<string, ContractMeta> = {};
+  for (const r of data ?? []) {
+    map[r.room as string] = { file_name: r.file_name as string, mime: r.mime as string, size: Number(r.size) };
+  }
+  return map;
 }
 
 export async function dataForKy(ky: string) {
@@ -871,22 +957,29 @@ export async function settingsData() {
     house: null as House | null,
     prices: [] as { occupancy: number; price: number }[],
     rooms: [] as Room[],
+    contracts: {} as Record<string, ContractMeta>,
     me: user
       ? { id: user.id, email: user.email, name: user.name, is_admin: user.is_admin }
       : null,
     users: [] as UserAccount[],
   };
   if (hid == null) return empty;
-  const [{ data: house }, { data: prices }, { data: rooms }] = await Promise.all([
+  const [{ data: house }, { data: prices }, { data: rooms }, { data: contracts }] = await Promise.all([
     sb.from("nhatro_houses").select("*").eq("id", hid).eq("owner_id", user!.id).maybeSingle(),
     sb.from("nhatro_prices").select("*").eq("house_id", hid).order("occupancy"),
     sb.from("nhatro_rooms").select("*").eq("house_id", hid).order("room"),
+    sb.from("nhatro_contracts").select("room, file_name, mime, size").eq("house_id", hid),
   ]);
   const users = user?.is_admin ? await listUsers() : [];
+  const contractMap: Record<string, ContractMeta> = {};
+  for (const r of contracts ?? []) {
+    contractMap[r.room as string] = { file_name: r.file_name as string, mime: r.mime as string, size: Number(r.size) };
+  }
   return {
     house: (house ?? null) as House | null,
     prices: (prices ?? []) as { occupancy: number; price: number }[],
     rooms: (rooms ?? []) as Room[],
+    contracts: contractMap,
     me: user
       ? { id: user.id, email: user.email, name: user.name, is_admin: user.is_admin }
       : null,

@@ -8,6 +8,7 @@
 2. Vào **SQL Editor**, chạy lần lượt:
    - Toàn bộ nội dung `supabase/seed.sql`
    - (Nếu là DB cũ nâng cấp lên multi-tenant) Toàn bộ nội dung `supabase/migrations/multi_tenant.sql`
+   - (Nếu chưa có tính năng hợp đồng phòng) Toàn bộ nội dung `supabase/migrations/contracts.sql`
 3. Vào **Settings → API**:
    - `Project URL` → điền vào `SUPABASE_URL`
    - `service_role` key → điền vào `SUPABASE_SERVICE_KEY`

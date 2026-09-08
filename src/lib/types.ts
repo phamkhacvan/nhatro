@@ -44,6 +44,23 @@ export type Room = {
   washing_machine: boolean;
 };
 
+export type ContractMeta = {
+  file_name: string;
+  mime: string;
+  size: number;
+};
+
+export type ContractRow = {
+  id?: number;
+  house_id: number;
+  room: string;
+  file_name: string;
+  mime: string;
+  size: number;
+  data: string;
+  created_at?: string;
+};
+
 export type MonthlyRow = {
   id?: number;
   house_id?: number;

@@ -2,19 +2,56 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Room } from "@/lib/types";
+import { Room, ContractMeta } from "@/lib/types";
 import { upsertRooms } from "@/app/actions";
 import { isoToVi, viToIso, maskDate, formatThousand, parseThousand } from "@/lib/calc";
 import { showToast } from "@/components/toast";
+import ContractControl from "@/components/contract-control";
 
 const label = "mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300";
 const input =
   "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-indigo-400";
 
-export default function RoomsManager({ rooms }: { rooms: Room[] }) {
+type DisplayRoom = {
+  room: string;
+  tenant: string;
+  phone: string;
+  occupancy: number;
+  washing_machine: boolean;
+  move_in: string;
+  contract_end: string;
+  tam_tru_date: string;
+  email: string | null;
+  deposit: number | string;
+  deposit_date: string;
+};
+
+function displayOf(r: DisplayRoom): string {
+  return JSON.stringify({
+    room: r.room.trim(),
+    tenant: r.tenant || "",
+    phone: r.phone || "",
+    occupancy: Number(r.occupancy) || 0,
+    washing_machine: Boolean(r.washing_machine),
+    move_in: r.move_in || "",
+    contract_end: r.contract_end || "",
+    tam_tru_date: r.tam_tru_date || "",
+    email: r.email?.trim() || null,
+    deposit: formatThousand(String(r.deposit ?? 0)),
+    deposit_date: r.deposit_date || "",
+  });
+}
+
+export default function RoomsManager({
+  rooms,
+  contracts,
+}: {
+  rooms: Room[];
+  contracts: Record<string, ContractMeta>;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [list, setList] = useState(() =>
+  const [list, setList] = useState<DisplayRoom[]>(() =>
     rooms.map((r) => ({
       ...r,
       move_in: isoToVi(r.move_in),
@@ -23,6 +60,14 @@ export default function RoomsManager({ rooms }: { rooms: Room[] }) {
       deposit_date: isoToVi(r.deposit_date),
     }))
   );
+  const [savedSnap, setSavedSnap] = useState<string>(() =>
+    JSON.stringify(
+      rooms.map((r) => displayOf({ ...r, move_in: isoToVi(r.move_in), contract_end: isoToVi(r.contract_end), tam_tru_date: isoToVi(r.tam_tru_date), deposit_date: isoToVi(r.deposit_date) }))
+    )
+  );
+
+  const listKey = JSON.stringify(list.map(displayOf));
+  const dirty = savedSnap !== listKey;
 
   function update(i: number, key: keyof Room, val: string) {
     setList((prev) => prev.map((r, j) => (j === i ? { ...r, [key]: val } : r)));
@@ -88,6 +133,7 @@ export default function RoomsManager({ rooms }: { rooms: Room[] }) {
       if (!res.ok) showToast("error", res.error || "Lưu thất bại.");
       else {
         showToast("success", "Lưu thành công");
+        setSavedSnap(listKey);
         router.refresh();
       }
     });
@@ -106,7 +152,7 @@ export default function RoomsManager({ rooms }: { rooms: Room[] }) {
           </button>
           <button
             onClick={save}
-            disabled={pending}
+            disabled={pending || !dirty}
             className="rounded-lg bg-blue-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-50 dark:bg-indigo-600 dark:hover:bg-indigo-500"
           >
             {pending ? "Đang lưu..." : "Lưu"}
@@ -114,9 +160,10 @@ export default function RoomsManager({ rooms }: { rooms: Room[] }) {
         </div>
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-4">
         {list.map((r, i) => (
-          <div key={i} className="grid grid-cols-[64px_1fr_1fr_1fr_58px_100px_122px_122px_122px_115px_130px_36px] items-end gap-2">
+          <div key={i} className="rounded-lg border border-slate-100 p-2 dark:border-slate-800">
+            <div className="grid grid-cols-[64px_1fr_1fr_1fr_58px_100px_122px_122px_122px_115px_130px_36px] items-end gap-2">
             <div>
               <label className={label}>Phòng</label>
               <input className={input} value={r.room} onChange={(e) => update(i, "room", e.target.value)} />
@@ -225,6 +272,22 @@ export default function RoomsManager({ rooms }: { rooms: Room[] }) {
             >
               ✕
             </button>
+            </div>
+            {r.room.trim() ? (
+              <div className="mt-2 flex items-center justify-between gap-2 border-t border-dashed border-slate-200 pt-2 dark:border-slate-700">
+                <span className="whitespace-nowrap text-xs font-medium text-slate-500 dark:text-slate-400">
+                  Hợp đồng:
+                </span>
+                <ContractControl room={r.room.trim()} initial={contracts[r.room.trim()] ?? null} />
+              </div>
+            ) : (
+              <div className="mt-2 flex items-center gap-2 border-t border-dashed border-slate-200 pt-2 dark:border-slate-700">
+                <span className="whitespace-nowrap text-xs font-medium text-slate-500 dark:text-slate-400">
+                  Hợp đồng:
+                </span>
+                <span className="text-xs text-slate-400">Lưu phòng trước để tải hợp đồng.</span>
+              </div>
+            )}
           </div>
         ))}
       </div>
