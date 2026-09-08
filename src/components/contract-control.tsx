@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { uploadContract, deleteContract, getContractMeta } from "@/app/actions";
 import { ContractMeta } from "@/lib/types";
@@ -21,7 +21,7 @@ export default function ContractControl({
 }) {
   const router = useRouter();
   const [meta, setMeta] = useState<ContractMeta | null>(initial ?? null);
-  const [pending, start] = useTransition();
+  const [saving, setSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -50,30 +50,42 @@ export default function ContractControl({
     }
     const fd = new FormData();
     fd.append("file", file);
-    start(async () => {
-      const res = await uploadContract(room, fd);
-      if (!res.ok) {
-        showToast("error", res.error || "Tải lên thất bại.");
-        return;
-      }
-      showToast("success", "Đã tải hợp đồng lên");
-      setMeta({ file_name: file.name, mime: file.type, size: file.size });
-      router.refresh();
-    });
+    setSaving(true);
+    uploadContract(room, fd)
+      .then((res) => {
+        setSaving(false);
+        if (!res.ok) {
+          showToast("error", res.error || "Tải lên thất bại.");
+          return;
+        }
+        showToast("success", "Đã tải hợp đồng lên");
+        setMeta({ file_name: file.name, mime: file.type, size: file.size });
+        router.refresh();
+      })
+      .catch((err) => {
+        setSaving(false);
+        showToast("error", "Tải lên thất bại: " + (err?.message || "lỗi không xác định"));
+      });
   }
 
   function onDelete() {
     if (!window.confirm(`Xóa hợp đồng "${meta?.file_name}" của phòng ${room}?`)) return;
-    start(async () => {
-      const res = await deleteContract(room);
-      if (!res.ok) {
-        showToast("error", res.error || "Xóa thất bại.");
-        return;
-      }
-      showToast("success", "Đã xóa hợp đồng");
-      setMeta(null);
-      router.refresh();
-    });
+    setSaving(true);
+    deleteContract(room)
+      .then((res) => {
+        setSaving(false);
+        if (!res.ok) {
+          showToast("error", res.error || "Xóa thất bại.");
+          return;
+        }
+        showToast("success", "Đã xóa hợp đồng");
+        setMeta(null);
+        router.refresh();
+      })
+      .catch((err) => {
+        setSaving(false);
+        showToast("error", "Xóa thất bại: " + (err?.message || "lỗi không xác định"));
+      });
   }
 
   return (
@@ -100,14 +112,14 @@ export default function ContractControl({
           </button>
           <button
             onClick={() => fileRef.current?.click()}
-            disabled={pending}
+            disabled={saving}
             className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
           >
-            {pending ? "Đang tải..." : "Thay"}
+            {saving ? "Đang tải..." : "Thay"}
           </button>
           <button
             onClick={onDelete}
-            disabled={pending}
+            disabled={saving}
             className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-500/30 dark:text-red-400 dark:hover:bg-red-500/10"
           >
             ✕ Xóa
@@ -117,10 +129,10 @@ export default function ContractControl({
         <>
           <button
             onClick={() => fileRef.current?.click()}
-            disabled={pending}
+            disabled={saving}
             className="rounded-lg border border-dashed border-blue-300 px-2.5 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-indigo-500/50 dark:text-indigo-300 dark:hover:bg-indigo-500/10"
           >
-            {pending ? "Đang tải..." : "＋ Tải hợp đồng"}
+            {saving ? "Đang tải..." : "＋ Tải hợp đồng"}
           </button>
           <span className="text-xs text-slate-400">PDF/Word/JPG/PNG · tối đa 4MB</span>
         </>

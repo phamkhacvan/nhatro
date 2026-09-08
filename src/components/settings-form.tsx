@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { House } from "@/lib/types";
 import { updateSettings, upsertPrices, getBanks } from "@/app/actions";
@@ -27,7 +27,7 @@ export default function SettingsForm({
   prices: { occupancy: number; price: number }[];
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [saving, setSaving] = useState(false);
   const [banks, setBanks] = useState<Bank[] | null>(null);
   const [s, setS] = useState<Record<string, string>>({
     ...(house as unknown as Record<string, string>),
@@ -74,8 +74,9 @@ export default function SettingsForm({
 
   function save(e: React.FormEvent) {
     e.preventDefault();
-    start(async () => {
-      const r1 = await updateSettings({
+    setSaving(true);
+    Promise.all([
+      updateSettings({
         name: s.name,
         address: s.address,
         due_text: s.due_text,
@@ -88,17 +89,24 @@ export default function SettingsForm({
         bank_code: s.bank_code || null,
         bank_account: s.bank_account || null,
         bank_name: s.bank_name || null,
+      }),
+      upsertPrices(p.map((x) => ({ occupancy: Number(x.occupancy), price: parseThousand(x.price) }))),
+    ])
+      .then(([r1, r2]) => {
+        setSaving(false);
+        if (!r1.ok || !r2.ok) {
+          const reason = !r1.ok ? r1.error : r2.error;
+          showToast("error", "Lưu thất bại: " + (reason || "lỗi không xác định"));
+        } else {
+          showToast("success", "Lưu thành công");
+          setSavedSnap(sKey(s, p));
+          router.refresh();
+        }
+      })
+      .catch((err) => {
+        setSaving(false);
+        showToast("error", "Lưu thất bại: " + (err?.message || "lỗi không xác định"));
       });
-      const r2 = await upsertPrices(p.map((x) => ({ occupancy: Number(x.occupancy), price: parseThousand(x.price) })));
-      if (!r1.ok || !r2.ok) {
-        const reason = !r1.ok ? r1.error : r2.error;
-        showToast("error", "Lưu thất bại: " + (reason || "lỗi không xác định"));
-      } else {
-        showToast("success", "Lưu thành công");
-        setSavedSnap(sKey(s, p));
-        router.refresh();
-      }
-    });
   }
 
   return (
@@ -222,10 +230,10 @@ export default function SettingsForm({
 
       <button
         type="submit"
-        disabled={pending || !dirty}
+        disabled={saving || !dirty}
         className="w-40 rounded-lg bg-blue-900 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-50 dark:bg-indigo-600 dark:hover:bg-indigo-500"
       >
-        {pending ? "Đang lưu..." : dirty ? "Lưu" : "Đã lưu"}
+        {saving ? "Đang lưu..." : dirty ? "Lưu" : "Đã lưu"}
       </button>
     </form>
   );

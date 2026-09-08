@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Room } from "@/lib/types";
 import { getRoomInfo, upsertRooms } from "@/app/actions";
@@ -36,7 +36,7 @@ function draftKey(d: Draft): string {
 
 export default function RoomInfoModal({ room, onClose }: { room: string; onClose: () => void }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<Draft | null | "loading">("loading");
   const [savedSnap, setSavedSnap] = useState<string | null>(null);
   const dirty = draft !== null && draft !== "loading" && savedSnap !== null && savedSnap !== draftKey(draft);
@@ -107,30 +107,36 @@ const apply = () => {
       showToast("error", "Ngày kết thúc HĐ phải sau ngày vào ở.");
       return;
     }
-    start(async () => {
-      const res = await upsertRooms([
-        {
-          ...draft,
-          room: draft.room.trim(),
-          occupancy: Number(draft.occupancy) || 0,
-          move_in: viToIso(draft.move_in ?? ""),
-          contract_end: viToIso(draft.contract_end ?? ""),
-          tam_tru_date: viToIso(draft.tam_tru_date ?? ""),
-          deposit_date: viToIso(draft.deposit_date ?? ""),
-          email: draft.email?.trim() || null,
-          deposit: parseThousand(draft.deposit),
-          initial_index: draft.initial_index === "" ? null : Number(draft.initial_index),
-          active: true,
-        },
-      ]);
-      if (!res.ok) showToast("error", res.error || "Lưu thất bại.");
-      else {
-        showToast("success", "Đã lưu thông tin phòng");
-        setSavedSnap(draftKey(draft));
-        router.refresh();
-        onClose();
-      }
-    });
+    setSaving(true);
+    upsertRooms([
+      {
+        ...draft,
+        room: draft.room.trim(),
+        occupancy: Number(draft.occupancy) || 0,
+        move_in: viToIso(draft.move_in ?? ""),
+        contract_end: viToIso(draft.contract_end ?? ""),
+        tam_tru_date: viToIso(draft.tam_tru_date ?? ""),
+        deposit_date: viToIso(draft.deposit_date ?? ""),
+        email: draft.email?.trim() || null,
+        deposit: parseThousand(draft.deposit),
+        initial_index: draft.initial_index === "" ? null : Number(draft.initial_index),
+        active: true,
+      },
+    ])
+      .then((res) => {
+        setSaving(false);
+        if (!res.ok) showToast("error", res.error || "Lưu thất bại.");
+        else {
+          showToast("success", "Đã lưu thông tin phòng");
+          setSavedSnap(draftKey(draft));
+          router.refresh();
+          onClose();
+        }
+      })
+      .catch((err) => {
+        setSaving(false);
+        showToast("error", "Lưu thất bại: " + (err?.message || "lỗi không xác định"));
+      });
   }
 
   return (
@@ -269,10 +275,10 @@ const apply = () => {
             </button>
             <button
               onClick={save}
-              disabled={pending || !dirty}
+              disabled={saving || !dirty}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-200 transition hover:bg-indigo-500 disabled:opacity-50"
             >
-              {pending ? "Đang lưu..." : "Lưu thay đổi"}
+              {saving ? "Đang lưu..." : "Lưu thay đổi"}
             </button>
           </div>
         )}

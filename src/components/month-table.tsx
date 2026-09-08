@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode, useState, useTransition, useEffect, useRef, useCallback } from "react";
+import { ReactNode, useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { House, MonthlyRow } from "@/lib/types";
 import { computeRow, fmt, displayKy, penaltyFor, nextKy, prevKy, prorate, parseKy, isoToVi, viToIso, maskDate, formatThousand, parseThousand } from "@/lib/calc";
@@ -86,7 +86,7 @@ type Props = {
 
 export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRows = [], minKy = null, onSelectMonth }: Props) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(rows.map(toDraft));
   const [pen, setPen] = useState<{ i: number; nights: string; violations: string; guest: boolean } | null>(null);
   const [roomModal, setRoomModal] = useState<string | null>(null);
@@ -312,17 +312,29 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
       return Promise.resolve(false);
     }
     return new Promise((resolve) => {
-      start(async () => {
-        const res = await saveMonth(ky, data.map((d) => toRow(ky, d)));
-        if (!res.ok) {
-          showToast("error", res.error || "Lưu thất bại.");
+      let done = false;
+      setSaving(true);
+      saveMonth(ky, data.map((d) => toRow(ky, d)))
+        .then((res) => {
+          if (done) return;
+          done = true;
+          setSaving(false);
+          if (!res.ok) {
+            showToast("error", res.error || "Lưu thất bại.");
+            resolve(false);
+          } else {
+            showToast("success", "Lưu thành công");
+            router.refresh();
+            resolve(true);
+          }
+        })
+        .catch((err) => {
+          if (done) return;
+          done = true;
+          setSaving(false);
+          showToast("error", "Lưu thất bại: " + (err?.message || "lỗi không xác định"));
           resolve(false);
-        } else {
-          showToast("success", "Lưu thành công");
-          router.refresh();
-          resolve(true);
-        }
-      });
+        });
     });
   }
 
@@ -419,10 +431,10 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
         </div>
         <button
           onClick={() => save()}
-          disabled={pending || !dirty}
+          disabled={saving || !dirty}
           className="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-200 transition hover:bg-indigo-500 disabled:opacity-50"
         >
-          {pending ? "Đang lưu..." : "Lưu thay đổi"}
+          {saving ? "Đang lưu..." : "Lưu thay đổi"}
         </button>
       </div>
 

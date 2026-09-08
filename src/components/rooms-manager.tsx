@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import { Room, ContractMeta, House } from "@/lib/types";
@@ -61,7 +61,7 @@ export default function RoomsManager({
   house?: House;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [saving, setSaving] = useState(false);
   const [list, setList] = useState<DisplayRoom[]>(() =>
     rooms.map((r) => ({
       ...r,
@@ -129,29 +129,34 @@ export default function RoomsManager({
       showToast("error", `Ngày ở phòng ${bad.room} chưa đúng định dạng dd/mm/yyyy.`);
       return;
     }
-    start(async () => {
-      const res = await upsertRooms(
-        list.map((r) => ({
-          ...r,
-          room: r.room.trim(),
-          occupancy: Number(r.occupancy) || 0,
-          washing_machine: Boolean(r.washing_machine),
-          move_in: viToIso(r.move_in ?? ""),
-          contract_end: viToIso(r.contract_end ?? ""),
-          tam_tru_date: viToIso(r.tam_tru_date ?? ""),
-          email: r.email?.trim() || null,
-          deposit: parseThousand(r.deposit),
-          deposit_date: viToIso(r.deposit_date ?? ""),
-          active: true,
-        }))
-      );
-      if (!res.ok) showToast("error", res.error || "Lưu thất bại.");
-      else {
-        showToast("success", "Lưu thành công");
-        setSavedSnap(listKey);
-        router.refresh();
-      }
-    });
+    const data = list.map((r) => ({
+      ...r,
+      room: r.room.trim(),
+      occupancy: Number(r.occupancy) || 0,
+      washing_machine: Boolean(r.washing_machine),
+      move_in: viToIso(r.move_in ?? ""),
+      contract_end: viToIso(r.contract_end ?? ""),
+      tam_tru_date: viToIso(r.tam_tru_date ?? ""),
+      email: r.email?.trim() || null,
+      deposit: parseThousand(r.deposit),
+      deposit_date: viToIso(r.deposit_date ?? ""),
+      active: true,
+    }));
+    setSaving(true);
+    upsertRooms(data)
+      .then((res) => {
+        setSaving(false);
+        if (!res.ok) showToast("error", res.error || "Lưu thất bại.");
+        else {
+          showToast("success", "Lưu thành công");
+          setSavedSnap(listKey);
+          router.refresh();
+        }
+      })
+      .catch((err) => {
+        setSaving(false);
+        showToast("error", "Lưu thất bại: " + (err?.message || "lỗi không xác định"));
+      });
   }
 
   function exportExcel() {
@@ -229,10 +234,10 @@ export default function RoomsManager({
           </button>
           <button
             onClick={save}
-            disabled={pending || !dirty}
+            disabled={saving || !dirty}
             className="rounded-lg bg-blue-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-50 dark:bg-indigo-600 dark:hover:bg-indigo-500"
           >
-            {pending ? "Đang lưu..." : "Lưu"}
+            {saving ? "Đang lưu..." : "Lưu"}
           </button>
         </div>
       </div>

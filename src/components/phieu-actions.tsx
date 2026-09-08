@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import { sendPhieuEmail, confirmPayment } from "@/app/actions";
 import { fmt, formatThousand, parseThousand } from "@/lib/calc";
 import { showToast } from "@/components/toast";
 
 export default function PhieuActions({ ky, room, remain }: { ky: string; room: string; remain: number }) {
-  const [pending, start] = useTransition();
+  const [busy, setBusy] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
   const [amount, setAmount] = useState("");
 
@@ -15,11 +15,17 @@ export default function PhieuActions({ ky, room, remain }: { ky: string; room: s
   }, [payOpen, remain]);
 
   function send() {
-    start(async () => {
-      const res = await sendPhieuEmail(ky, room);
-      if (!res.ok) showToast("error", "Gửi email thất bại: " + (res.error || "lỗi không xác định"));
-      else showToast("success", "Đã gửi email đến người thuê");
-    });
+    setBusy(true);
+    sendPhieuEmail(ky, room)
+      .then((res) => {
+        setBusy(false);
+        if (!res.ok) showToast("error", "Gửi email thất bại: " + (res.error || "lỗi không xác định"));
+        else showToast("success", "Đã gửi email đến người thuê");
+      })
+      .catch((err) => {
+        setBusy(false);
+        showToast("error", "Gửi email thất bại: " + (err?.message || "lỗi không xác định"));
+      });
   }
 
   function confirm() {
@@ -32,19 +38,25 @@ export default function PhieuActions({ ky, room, remain }: { ky: string; room: s
       showToast("error", `Số tiền nhận không được vượt quá ${fmt(remain)} (còn thiếu).`);
       return;
     }
-    start(async () => {
-      const res = await confirmPayment(ky, room, val);
-      if (!res.ok) showToast("error", res.error || "Lỗi xác nhận");
-      else {
-        showToast(
-          "success",
-          (res.remain ?? 0) > 0
-            ? `Đã nhận ${fmt(val)} — người thuê còn thiếu ${fmt(res.remain ?? 0)}.${res.emailSent ? " Email đã gửi cho người thuê." : " Người thuê chưa có email nên không gửi được thông báo."}`
-            : `Đã nhận ${fmt(val)} — tổng ${fmt(res.paid ?? 0)} đầy đủ.${res.emailSent ? " Email đã gửi cho người thuê." : " Người thuê chưa có email nên không gửi được thông báo."}`
-        );
-        window.location.reload();
-      }
-    });
+    setBusy(true);
+    confirmPayment(ky, room, val)
+      .then((res) => {
+        setBusy(false);
+        if (!res.ok) showToast("error", res.error || "Lỗi xác nhận");
+        else {
+          showToast(
+            "success",
+            (res.remain ?? 0) > 0
+              ? `Đã nhận ${fmt(val)} — người thuê còn thiếu ${fmt(res.remain ?? 0)}.${res.emailSent ? " Email đã gửi cho người thuê." : " Người thuê chưa có email nên không gửi được thông báo."}`
+              : `Đã nhận ${fmt(val)} — tổng ${fmt(res.paid ?? 0)} đầy đủ.${res.emailSent ? " Email đã gửi cho người thuê." : " Người thuê chưa có email nên không gửi được thông báo."}`
+          );
+          window.location.reload();
+        }
+      })
+      .catch((err) => {
+        setBusy(false);
+        showToast("error", "Lỗi xác nhận: " + (err?.message || "lỗi không xác định"));
+      });
   }
 
   return (
@@ -56,18 +68,18 @@ export default function PhieuActions({ ky, room, remain }: { ky: string; room: s
         {remain > 0 && (
           <button
             onClick={() => setPayOpen(true)}
-            disabled={pending}
+            disabled={busy}
             className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-green-500 disabled:opacity-50"
           >
-            {pending ? "Đang xử lý..." : "✓ Đã nhận tiền"}
+            {busy ? "Đang xử lý..." : "✓ Đã nhận tiền"}
           </button>
         )}
         <button
           onClick={send}
-          disabled={pending}
+          disabled={busy}
           className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-500 disabled:opacity-50"
         >
-          {pending ? "Đang gửi..." : "📧 Gửi email"}
+          {busy ? "Đang gửi..." : "📧 Gửi email"}
         </button>
       </div>
 
@@ -99,10 +111,10 @@ export default function PhieuActions({ ky, room, remain }: { ky: string; room: s
               </button>
               <button
                 onClick={confirm}
-                disabled={pending}
+                disabled={busy}
                 className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-green-500 disabled:opacity-50"
               >
-                {pending ? "Đang xử lý..." : `Xác nhận ${amount ? fmt(parseThousand(amount)) : ""}`}
+                {busy ? "Đang xử lý..." : `Xác nhận ${amount ? fmt(parseThousand(amount)) : ""}`}
               </button>
             </div>
           </div>
