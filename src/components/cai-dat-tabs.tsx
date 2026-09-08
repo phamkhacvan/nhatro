@@ -46,7 +46,7 @@ export default function CaiDatTabs({
       {tab === "house" ? (
         <SettingsForm house={house} prices={prices} />
       ) : tab === "rooms" ? (
-        <RoomsManager rooms={rooms} contracts={contracts} />
+        <RoomsManager rooms={rooms} contracts={contracts} house={house} />
       ) : (
         <AccountManager me={me} initialUsers={users} />
       )}

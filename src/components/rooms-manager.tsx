@@ -2,7 +2,8 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Room, ContractMeta } from "@/lib/types";
+import * as XLSX from "xlsx";
+import { Room, ContractMeta, House } from "@/lib/types";
 import { upsertRooms } from "@/app/actions";
 import { isoToVi, viToIso, maskDate, formatThousand, parseThousand } from "@/lib/calc";
 import { showToast } from "@/components/toast";
@@ -45,9 +46,11 @@ function displayOf(r: DisplayRoom): string {
 export default function RoomsManager({
   rooms,
   contracts,
+  house,
 }: {
   rooms: Room[];
   contracts: Record<string, ContractMeta>;
+  house?: House;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -139,6 +142,56 @@ export default function RoomsManager({
     });
   }
 
+  function exportExcel() {
+    const headers = [
+      "STT",
+      "Phòng",
+      "Người thuê",
+      "SĐT",
+      "Email",
+      "Số người",
+      "Nghề nghiệp",
+      "Ngày vào ở",
+      "Kết thúc HĐ",
+      "Hoàn thành ĐKTT",
+      "Tiền cọc (đ)",
+      "Ngày nhận cọc",
+      "Máy giặt",
+    ];
+    const rows = list.map((r, i) => [
+      i + 1,
+      r.room.trim(),
+      r.tenant ?? "",
+      r.phone ?? "",
+      r.email ?? "",
+      Number(r.occupancy) || 0,
+      "",
+      r.move_in ?? "",
+      r.contract_end ?? "",
+      r.tam_tru_date ?? "",
+      parseThousand(r.deposit),
+      r.deposit_date ?? "",
+      r.washing_machine ? "Có" : "Không",
+    ]);
+    const aoa: (string | number)[][] = [];
+    const title = `DANH SÁCH NGƯỜI THUÊ TRỌ - ${house?.name ?? ""}`;
+    aoa.push([title]);
+    aoa.push([house?.address ?? ""]);
+    aoa.push([]);
+    aoa.push(headers);
+    rows.forEach((r) => aoa.push(r));
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!merges"] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } },
+    ];
+    ws["!cols"] = headers.map((_, j) => ({ wch: [6, 10, 24, 13, 26, 10, 18, 13, 13, 15, 13, 13, 10][j] ?? 12 }));
+    XLSX.utils.book_append_sheet(wb, ws, "Người thuê");
+    const today = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `danh-sach-nguoi-thue-${house?.name ?? "nha-tro"}-${today}.xlsx`);
+  }
+
   return (
     <div className="rounded-2xl bg-white p-6 shadow dark:bg-slate-900">
       <div className="mb-3 flex items-center justify-between">
@@ -149,6 +202,12 @@ export default function RoomsManager({
             className="rounded-lg border border-blue-900 px-3 py-1.5 text-sm font-semibold text-blue-900 hover:bg-blue-50 dark:border-indigo-500 dark:text-indigo-400 dark:hover:bg-indigo-500/10"
           >
             + Thêm phòng
+          </button>
+          <button
+            onClick={exportExcel}
+            className="rounded-lg border border-emerald-600 px-3 py-1.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-500 dark:text-emerald-400 dark:hover:bg-emerald-500/10"
+          >
+            ⬇ Xuất Excel
           </button>
           <button
             onClick={save}
