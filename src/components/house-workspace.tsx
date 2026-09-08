@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { House } from "@/lib/types";
 import { dataForKy, settingsData, getAuditLogs } from "@/app/actions";
 import { pricesToMap, fmt, displayKy } from "@/lib/calc";
-import { useDirty, getDirtySaveHandler, setDirty } from "@/lib/dirty";
+import { setDirty } from "@/lib/dirty";
 import MonthTable from "@/components/month-table";
 import CaiDatTabs from "@/components/cai-dat-tabs";
 
@@ -198,15 +198,7 @@ export default function HouseWorkspace({
   const [auditKyFilter, setAuditKyFilter] = useState<string>(currentKy);
   const [auditPage, setAuditPage] = useState(0);
   const [settings, setSettings] = useState<SettingsData | null>(null);
-  const dirty = useDirty();
   const router = useRouter();
-  const [pendingNav, setPendingNav] = useState<
-    | { type: "tab"; value: "bangtinh" | "lichsu" | "caidat" }
-    | { type: "month"; value: string }
-    | { type: "home" }
-    | null
-  >(null);
-  const [saveLoading, setSaveLoading] = useState(false);
 
   useEffect(() => {
     if (tab === "lichsu" && auditLogs === null) {
@@ -246,7 +238,7 @@ export default function HouseWorkspace({
     availableMonths.push({ ky: m, label: `${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}` });
   }
 
-  function executeNav(p: NonNullable<typeof pendingNav>) {
+  function executeNav(p: { type: "tab"; value: "bangtinh" | "lichsu" | "caidat" } | { type: "month"; value: string } | { type: "home" }) {
     if (p.type === "tab") {
       setTab(p.value);
     } else if (p.type === "month") {
@@ -257,42 +249,9 @@ export default function HouseWorkspace({
     }
   }
 
-  function requestNav(p: NonNullable<typeof pendingNav>) {
-    if (dirty) {
-      setPendingNav(p);
-    } else {
-      executeNav(p);
-    }
-  }
-
-  async function confirmSave() {
-    setSaveLoading(true);
-    let ok = false;
-    try {
-      const h = getDirtySaveHandler();
-      if (h) ok = await h();
-    } catch {
-      ok = false;
-    } finally {
-      setSaveLoading(false);
-    }
-    if (ok) {
-      setDirty(false);
-      const p = pendingNav;
-      setPendingNav(null);
-      executeNav(p!);
-    }
-  }
-
-  function confirmDiscard() {
+  function requestNav(p: { type: "tab"; value: "bangtinh" | "lichsu" | "caidat" } | { type: "month"; value: string } | { type: "home" }) {
     setDirty(false);
-    const p = pendingNav;
-    setPendingNav(null);
-    if (p) executeNav(p);
-  }
-
-  function cancelNav() {
-    setPendingNav(null);
+    executeNav(p);
   }
 
   const tabCls = (a: boolean) =>
@@ -419,38 +378,6 @@ export default function HouseWorkspace({
         ) : (
           <RowsSkeleton />
         ))}
-
-      {pendingNav && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900 dark:ring-1 dark:ring-slate-700">
-            <p className="text-base font-bold text-slate-900 dark:text-slate-100">Bạn chưa lưu thay đổi</p>
-            <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
-              Bảng tính có thay đổi chưa được lưu. Bạn muốn lưu trước khi rời đi không?
-            </p>
-            <div className="mt-5 flex flex-col gap-2">
-              <button
-                onClick={confirmSave}
-                disabled={saveLoading || !dirty}
-                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-              >
-                {saveLoading ? "Đang lưu..." : "💾 Lưu thay đổi"}
-              </button>
-              <button
-                onClick={confirmDiscard}
-                className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-              >
-                Không lưu
-              </button>
-              <button
-                onClick={cancelNav}
-                className="px-4 py-2 text-sm font-medium text-slate-400 transition hover:text-slate-600 dark:hover:text-slate-300"
-              >
-                Hủy
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

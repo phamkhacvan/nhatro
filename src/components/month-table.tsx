@@ -8,7 +8,7 @@ import { saveMonth } from "@/app/actions";
 import { showToast } from "@/components/toast";
 import RoomInfoModal from "@/components/room-info-modal";
 import MonthSelector from "@/components/month-selector";
-import { setDirty, setDirtySaveHandler, useDirty } from "@/lib/dirty";
+import { setDirty, useDirty } from "@/lib/dirty";
 
 type Draft = {
   room: string;
@@ -92,16 +92,12 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
   const [roomModal, setRoomModal] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" } | null>(null);
-  const [tabPrompt, setTabPrompt] = useState(false);
-  const [tabSaving, setTabSaving] = useState(false);
   const dirty = useDirty();
   const prevMap = new Map(prevRows.map((r) => [r.room, r]));
   const m = parseKy(ky).m;
   const prevM = parseKy(prevKy(ky)).m;
   const nextM = parseKy(nextKy(ky)).m;
 
-  const saveRef = useRef<(next?: Draft[]) => Promise<boolean>>(async () => false);
-  saveRef.current = save;
   const firstRender = useRef(true);
   const dirtyRef = useRef(false);
 
@@ -143,11 +139,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
   });
 
   useEffect(() => {
-    setDirtySaveHandler(async () => {
-      return saveRef.current();
-    });
     return () => {
-      setDirtySaveHandler(null);
       setDirty(false);
       dirtyRef.current = false;
     };
@@ -162,37 +154,6 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, []);
-
-  useEffect(() => {
-    const onVis = () => {
-      if (!document.hidden && dirtyRef.current) {
-        setTabPrompt(true);
-      }
-    };
-    document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
-  }, []);
-
-  async function saveTabAndClose() {
-    if (!dirtyRef.current) {
-      setTabPrompt(false);
-      return;
-    }
-    setTabSaving(true);
-    const ok = await saveRef.current();
-    setTabSaving(false);
-    if (ok) {
-      dirtyRef.current = false;
-      setDirty(false);
-      setTabPrompt(false);
-    }
-  }
-
-  function discardTabEdits() {
-    setDirty(false);
-    dirtyRef.current = false;
-    setTabPrompt(false);
-  }
 
   function openPen(i: number) {
     const d = editing[i];
@@ -963,38 +924,6 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
         })()}
 
       {roomModal && <RoomInfoModal room={roomModal} onClose={() => setRoomModal(null)} />}
-
-      {tabPrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900 dark:ring-1 dark:ring-slate-700">
-            <p className="text-base font-bold text-slate-900 dark:text-slate-100">Bạn chưa lưu thay đổi</p>
-            <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
-              Bảng tính có thay đổi chưa được lưu. Bạn muốn lưu thay đổi trước khi rời khỏi tab này không?
-            </p>
-            <div className="mt-5 flex flex-col gap-2">
-              <button
-                onClick={saveTabAndClose}
-                disabled={tabSaving || !dirty}
-                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-              >
-                {tabSaving ? "Đang lưu..." : "💾 Lưu thay đổi"}
-              </button>
-              <button
-                onClick={discardTabEdits}
-                className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-              >
-                Không lưu
-              </button>
-              <button
-                onClick={() => setTabPrompt(false)}
-                className="px-4 py-2 text-sm font-medium text-slate-400 transition hover:text-slate-600 dark:hover:text-slate-300"
-              >
-                Hủy
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -1,9 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-type SaveHandler = () => Promise<boolean>;
-
 let dirty = false;
-let saveHandler: SaveHandler | null = null;
 const listeners = new Set<() => void>();
 
 function emit(): void {
@@ -19,14 +16,6 @@ export function setDirty(v: boolean): void {
 
 export function isDirty(): boolean {
   return dirty;
-}
-
-export function setDirtySaveHandler(h: SaveHandler | null): void {
-  saveHandler = h;
-}
-
-export function getDirtySaveHandler(): SaveHandler | null {
-  return saveHandler;
 }
 
 export function subscribeDirty(cb: () => void): () => void {
