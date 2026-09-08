@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { House } from "@/lib/types";
 import { dataForKy, settingsData, getAuditLogs } from "@/app/actions";
-import { pricesToMap, fmt, displayKy } from "@/lib/calc";
+import { pricesToMap } from "@/lib/calc";
 import { setDirty } from "@/lib/dirty";
 import MonthTable from "@/components/month-table";
 import CaiDatTabs from "@/components/cai-dat-tabs";
@@ -12,7 +12,6 @@ import CaiDatTabs from "@/components/cai-dat-tabs";
 type MonthData = Awaited<ReturnType<typeof dataForKy>>;
 type SettingsData = Awaited<ReturnType<typeof settingsData>>;
 type AuditLog = { id: number; ky: string | null; room: string | null; field: string; old_val: string | null; new_val: string | null; created_at: string };
-type AuditResult = { logs: AuditLog[]; total: number };
 
 function TableSkeleton({ rows = 4 }: { rows?: number }) {
   return (
@@ -202,11 +201,9 @@ export default function HouseWorkspace({
 
   useEffect(() => {
     if (tab === "lichsu" && auditLogs === null) {
-      setAuditLoading(true);
       getAuditLogs(PAGE_SIZE, 0, auditKyFilter || undefined).then((r) => {
         setAuditLogs(r.logs);
         setAuditTotal(r.total);
-        setAuditLoading(false);
       });
     }
     if (tab === "caidat" && settings === null) settingsData().then(setSettings);

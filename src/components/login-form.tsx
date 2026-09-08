@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { login, register, requestPasswordReset } from "@/app/actions";
 
 export default function LoginForm() {
@@ -13,6 +13,7 @@ export default function LoginForm() {
   const [forgotMsg, setForgotMsg] = useState("");
   const [pending, start] = useTransition();
   const sp = useSearchParams();
+  const router = useRouter();
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -21,7 +22,7 @@ export default function LoginForm() {
       start(async () => {
         const res = await login(email, pass);
         if (res.ok) {
-          window.location.href = sp.get("next") || "/";
+          router.push(sp.get("next") || "/");
         } else {
           setError(res.error || "Lỗi đăng nhập.");
         }
@@ -30,7 +31,7 @@ export default function LoginForm() {
       start(async () => {
         const res = await register({ name, email, password: pass });
         if (res.ok) {
-          window.location.href = "/";
+          router.push("/");
         } else {
           setError(res.error || "Lỗi đăng ký.");
         }

@@ -36,7 +36,7 @@ export default async function LichSuPage({ searchParams }: { searchParams: Promi
 
   let res = await getAuditLogs(PAGE_SIZE, (wantPage - 1) * PAGE_SIZE);
   const totalPages = Math.max(1, Math.ceil(res.total / PAGE_SIZE));
-  let page = Math.min(wantPage, totalPages);
+  const page = Math.min(wantPage, totalPages);
   if (page !== wantPage) {
     res = await getAuditLogs(PAGE_SIZE, (page - 1) * PAGE_SIZE);
   }

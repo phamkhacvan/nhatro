@@ -3,9 +3,6 @@
 import { cookies, headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import fs from "fs";
-import path from "path";
-import { createHash, timingSafeEqual } from "node:crypto";
 import { after } from "next/server";
 import { UAParser } from "ua-parser-js";
 import { sb } from "@/lib/supabase";
@@ -19,12 +16,6 @@ async function logAudit(houseId: number, entries: { ky?: string; room?: string; 
   const rows = entries.filter((e) => e.old_val !== e.new_val).map((e) => ({ house_id: houseId, ...e }));
   if (rows.length === 0) return;
   await sb.from("nhatro_audit_log").insert(rows);
-}
-
-function safeEqual(a: string, b: string): boolean {
-  const ha = createHash("sha256").update(a).digest();
-  const hb = createHash("sha256").update(b).digest();
-  return timingSafeEqual(ha, hb);
 }
 
 const NOTIFY_EMAIL = process.env.ADMIN_NOTIFY_EMAIL || "info@legaleader.com";
@@ -288,11 +279,9 @@ async function healMonthIntegrity(houseId: number, curKy: string | null): Promis
     if (!p.move_in || p.move_in.slice(0, 7) !== prev) continue;
     const c = cMap.get(p.room);
     if (!c) continue;
-    const pOld = p.old_index == null ? null : Number(p.old_index);
-    const pNew = p.new_index == null ? null : Number(p.new_index);
     const cOld = c.old_index == null ? null : Number(c.old_index);
     const cNew = c.new_index == null ? null : Number(c.new_index);
-    if (pNew != null || p.close_date != null) continue;
+    if (p.new_index != null || p.close_date != null) continue;
     if (cNew == null || cNew === 0 || cOld == null || !c.close_date) continue;
     const chot = String(cNew);
     await Promise.all([
@@ -423,12 +412,10 @@ export async function saveMonth(ky: string, rows: MonthlyRow[]) {
     }
   }
 
-  for (const u of upserts) {
-    const { error } = await sb
-      .from("nhatro_monthly")
-      .upsert(u, { onConflict: "house_id,ky,room" });
-    if (error) return { ok: false, error: error.message };
-  }
+  const { error } = await sb
+    .from("nhatro_monthly")
+    .upsert(upserts, { onConflict: "house_id,ky,room" });
+  if (error) return { ok: false, error: error.message };
   const next = nextKy(ky);
   for (const u of upserts) {
     const nextOldIndex = u.new_index ?? u.old_index ?? null;
@@ -979,7 +966,7 @@ export async function activateHouse(id: number) {
 
 export async function settingsData() {
   const user = await getCurrentUser();
-  let hid: number | null = user?.active_house_id ?? null;
+  const hid: number | null = user?.active_house_id ?? null;
   const empty = {
     house: null as House | null,
     prices: [] as { occupancy: number; price: number }[],

@@ -285,6 +285,8 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
             resolve(false);
           } else {
             showToast("success", "Lưu thành công");
+            setEditing(data.map((d) => toDraft(toRow(ky, d))));
+            setDirty(false);
             router.refresh();
             resolve(true);
           }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { sendPhieuEmail, confirmPayment } from "@/app/actions";
 import { fmt, formatThousand, parseThousand } from "@/lib/calc";
 import { showToast } from "@/components/toast";
@@ -8,11 +8,7 @@ import { showToast } from "@/components/toast";
 export default function PhieuActions({ ky, room, remain }: { ky: string; room: string; remain: number }) {
   const [busy, setBusy] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
-  const [amount, setAmount] = useState("");
-
-  useEffect(() => {
-    if (payOpen) setAmount(formatThousand(String(remain)));
-  }, [payOpen, remain]);
+  const [amount, setAmount] = useState(() => formatThousand(String(remain)));
 
   function send() {
     setBusy(true);
@@ -67,7 +63,10 @@ export default function PhieuActions({ ky, room, remain }: { ky: string; room: s
       <div className="flex gap-2">
         {remain > 0 && (
           <button
-            onClick={() => setPayOpen(true)}
+            onClick={() => {
+              setAmount(formatThousand(String(remain)));
+              setPayOpen(true);
+            }}
             disabled={busy}
             className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-green-500 disabled:opacity-50"
           >

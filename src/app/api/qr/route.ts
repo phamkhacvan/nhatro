@@ -1,5 +1,4 @@
 import type { NextRequest } from "next/server";
-import { sb } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
