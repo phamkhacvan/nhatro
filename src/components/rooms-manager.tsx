@@ -17,6 +17,10 @@ type DisplayRoom = {
   room: string;
   tenant: string;
   phone: string;
+  cccd: string;
+  gender: string;
+  birth_year: string;
+  occupation: string;
   occupancy: number;
   washing_machine: boolean;
   move_in: string;
@@ -32,6 +36,10 @@ function displayOf(r: DisplayRoom): string {
     room: r.room.trim(),
     tenant: r.tenant || "",
     phone: r.phone || "",
+    cccd: r.cccd?.trim() || "",
+    gender: r.gender || "",
+    birth_year: r.birth_year || "",
+    occupation: r.occupation || "",
     occupancy: Number(r.occupancy) || 0,
     washing_machine: Boolean(r.washing_machine),
     move_in: r.move_in || "",
@@ -57,6 +65,10 @@ export default function RoomsManager({
   const [list, setList] = useState<DisplayRoom[]>(() =>
     rooms.map((r) => ({
       ...r,
+      cccd: r.cccd ?? "",
+      gender: r.gender ?? "",
+      birth_year: r.birth_year ?? "",
+      occupation: r.occupation ?? "",
       move_in: isoToVi(r.move_in),
       contract_end: isoToVi(r.contract_end),
       tam_tru_date: isoToVi(r.tam_tru_date),
@@ -65,7 +77,7 @@ export default function RoomsManager({
   );
   const [savedSnap, setSavedSnap] = useState<string>(() =>
     JSON.stringify(
-      rooms.map((r) => displayOf({ ...r, move_in: isoToVi(r.move_in), contract_end: isoToVi(r.contract_end), tam_tru_date: isoToVi(r.tam_tru_date), deposit_date: isoToVi(r.deposit_date) }))
+      rooms.map((r) => displayOf({ ...r, cccd: r.cccd ?? "", gender: r.gender ?? "", birth_year: r.birth_year ?? "", occupation: r.occupation ?? "", move_in: isoToVi(r.move_in), contract_end: isoToVi(r.contract_end), tam_tru_date: isoToVi(r.tam_tru_date), deposit_date: isoToVi(r.deposit_date) }))
     )
   );
 
@@ -79,7 +91,7 @@ export default function RoomsManager({
   function addRoom() {
     setList((prev) => [
       ...prev,
-      { room: "", tenant: "", phone: "", email: "", occupancy: 1, move_in: "", contract_end: "", tam_tru_date: "", deposit: 0, deposit_date: "", active: true, washing_machine: false },
+      { room: "", tenant: "", phone: "", email: "", cccd: "", gender: "", birth_year: "", occupation: "", occupancy: 1, move_in: "", contract_end: "", tam_tru_date: "", deposit: 0, deposit_date: "", active: true, washing_machine: false },
     ]);
   }
 
@@ -146,11 +158,14 @@ export default function RoomsManager({
     const headers = [
       "STT",
       "Phòng",
+      "Số người ở",
       "Người thuê",
+      "CCCD",
+      "Giới tính",
+      "Năm sinh",
+      "Nghề nghiệp",
       "SĐT",
       "Email",
-      "Số người",
-      "Nghề nghiệp",
       "Ngày vào ở",
       "Kết thúc HĐ",
       "Hoàn thành ĐKTT",
@@ -161,11 +176,14 @@ export default function RoomsManager({
     const rows = list.map((r, i) => [
       i + 1,
       r.room.trim(),
+      Number(r.occupancy) || 0,
       r.tenant ?? "",
+      r.cccd ?? "",
+      r.gender ?? "",
+      r.birth_year ?? "",
+      r.occupation ?? "",
       r.phone ?? "",
       r.email ?? "",
-      Number(r.occupancy) || 0,
-      "",
       r.move_in ?? "",
       r.contract_end ?? "",
       r.tam_tru_date ?? "",
@@ -186,7 +204,7 @@ export default function RoomsManager({
       { s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } },
       { s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } },
     ];
-    ws["!cols"] = headers.map((_, j) => ({ wch: [6, 10, 24, 13, 26, 10, 18, 13, 13, 15, 13, 13, 10][j] ?? 12 }));
+    ws["!cols"] = headers.map((_, j) => ({ wch: [6, 8, 10, 24, 16, 10, 10, 18, 20, 24, 13, 13, 15, 13, 13, 9][j] ?? 12 }));
     XLSX.utils.book_append_sheet(wb, ws, "Người thuê");
     const today = new Date().toISOString().slice(0, 10);
     XLSX.writeFile(wb, `danh-sach-nguoi-thue-${house?.name ?? "nha-tro"}-${today}.xlsx`);
@@ -331,6 +349,24 @@ export default function RoomsManager({
             >
               ✕
             </button>
+            </div>
+            <div className="mt-2 grid grid-cols-[1fr_1fr_1fr_1.5fr] items-end gap-2 border-t border-dashed border-slate-100 pt-2 dark:border-slate-800">
+              <div>
+                <label className={label}>CCCD</label>
+                <input className={input} value={r.cccd ?? ""} onChange={(e) => update(i, "cccd", e.target.value)} placeholder="Số CCCD/CMND" />
+              </div>
+              <div>
+                <label className={label}>Giới tính</label>
+                <input className={input} value={r.gender ?? ""} onChange={(e) => update(i, "gender", e.target.value)} placeholder="Nam/Nữ" />
+              </div>
+              <div>
+                <label className={label}>Năm sinh</label>
+                <input className={input} value={r.birth_year ?? ""} onChange={(e) => update(i, "birth_year", e.target.value)} placeholder="1990" />
+              </div>
+              <div>
+                <label className={label}>Nghề nghiệp</label>
+                <input className={input} value={r.occupation ?? ""} onChange={(e) => update(i, "occupation", e.target.value)} placeholder="Sinh viên, nhân viên..." />
+              </div>
             </div>
             {r.room.trim() ? (
               <div className="mt-2 flex items-center justify-between gap-2 border-t border-dashed border-slate-200 pt-2 dark:border-slate-700">

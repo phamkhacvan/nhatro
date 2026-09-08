@@ -32,6 +32,10 @@ export type Room = {
   room: string;
   tenant: string;
   phone: string;
+  cccd?: string | null;
+  gender?: string | null;
+  birth_year?: string | null;
+  occupation?: string | null;
   email: string | null;
   occupancy: number;
   move_in: string | null;
@@ -68,6 +72,10 @@ export type MonthlyRow = {
   room: string;
   tenant: string;
   phone: string;
+  cccd?: string | null;
+  gender?: string | null;
+  birth_year?: string | null;
+  occupation?: string | null;
   occupancy: number;
   old_index: number | null;
   new_index: number | null;

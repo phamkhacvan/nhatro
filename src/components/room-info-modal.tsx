@@ -19,6 +19,10 @@ function draftKey(d: Draft): string {
     room: d.room.trim(),
     tenant: d.tenant || "",
     phone: d.phone || "",
+    cccd: d.cccd?.trim() || "",
+    gender: d.gender || "",
+    birth_year: d.birth_year || "",
+    occupation: d.occupation || "",
     occupancy: Number(d.occupancy) || 0,
     washing_machine: Boolean(d.washing_machine),
     move_in: d.move_in || "",
@@ -52,6 +56,10 @@ const apply = () => {
             room: res.room.room,
             tenant: res.room.tenant,
             phone: res.room.phone,
+            cccd: res.room.cccd ?? "",
+            gender: res.room.gender ?? "",
+            birth_year: res.room.birth_year ?? "",
+            occupation: res.room.occupation ?? "",
             email: res.room.email,
             occupancy: res.room.occupancy,
             move_in: isoToVi(res.room.move_in),
@@ -159,6 +167,22 @@ const apply = () => {
             <div>
               <label className={label}>SĐT</label>
               <input className={input} value={draft.phone} onChange={(e) => set("phone", e.target.value)} placeholder="Số điện thoại" />
+            </div>
+            <div>
+              <label className={label}>CCCD</label>
+              <input className={input} value={draft.cccd ?? ""} onChange={(e) => set("cccd", e.target.value)} placeholder="Số CCCD/CMND" />
+            </div>
+            <div>
+              <label className={label}>Giới tính</label>
+              <input className={input} value={draft.gender ?? ""} onChange={(e) => set("gender", e.target.value)} placeholder="Nam/Nữ" />
+            </div>
+            <div>
+              <label className={label}>Năm sinh</label>
+              <input className={input} value={draft.birth_year ?? ""} onChange={(e) => set("birth_year", e.target.value)} placeholder="1990" />
+            </div>
+            <div>
+              <label className={label}>Nghề nghiệp</label>
+              <input className={input} value={draft.occupation ?? ""} onChange={(e) => set("occupation", e.target.value)} placeholder="Sinh viên, nhân viên..." />
             </div>
             <div>
               <label className={label}>Email</label>

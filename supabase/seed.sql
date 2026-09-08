@@ -60,6 +60,10 @@ create table if not exists nhatro_rooms (
   room text not null,
   tenant text default '',
   phone text default '',
+  cccd text default '',
+  gender text default '',
+  birth_year text default '',
+  occupation text default '',
   occupancy int default 1 check (occupancy between 0 and 2),
   move_in date,
   email text,
@@ -69,17 +73,17 @@ create table if not exists nhatro_rooms (
   active boolean default true
 );
 create unique index if not exists uq_nhatro_rooms_house on nhatro_rooms (house_id, room);
-insert into nhatro_rooms (house_id, room, tenant, phone, occupancy, move_in, email, deposit, deposit_date) values
-  (1, '301', '', '', 0, null, null, 0, null),
-  (1, '302', 'VÕ KỲ NHIÊN', '0393146549', 1, null, null, 0, null),
-  (1, '303', 'TỪ SĨ HÒA AN', '0819297958', 1, null, null, 0, null),
-  (1, '304', '', '', 1, null, null, 0, null),
-  (1, '401', 'PHẠM VĂN CHÍ', '0328128713', 1, null, null, 0, null),
-  (1, '402', 'HUỲNH ANH THY - LÊ NGUYỄN MỸ HẠNH', '0784879758 / 0777813072', 2, null, null, 0, null),
-  (1, '403', 'NGUYỄN BÙI ANH THƠ', '0364565578', 1, null, null, 0, null),
-  (1, '404', 'NGUYỄN TRÚC NHƯ', '0886268752', 1, null, null, 0, null)
+insert into nhatro_rooms (house_id, room, tenant, phone, cccd, gender, birth_year, occupation, occupancy, move_in, email, deposit, deposit_date) values
+  (1, '301', '', '', '', '', '', '', 0, null, null, 0, null),
+  (1, '302', 'VÕ KỲ NHIÊN', '0393146549', '052308013328', 'Nữ', '2008', 'Sinh viên', 1, null, null, 0, null),
+  (1, '303', 'TỪ SĨ HÒA AN', '0819297958', '060208011944', 'Nam', '2008', 'Sinh viên', 1, null, null, 0, null),
+  (1, '304', '', '', '', '', '', '', 1, null, null, 0, null),
+  (1, '401', 'PHẠM VĂN CHÍ', '0328128713', '089094018065', 'Nam', '1994', 'Nhân viên văn phòng', 1, null, null, 0, null),
+  (1, '402', 'HUỲNH ANH THY - LÊ NGUYỄN MỸ HẠNH', '0784879758 / 0777813072', '077308002035 - 075308005233', 'Nữ - Nữ', '2008 - 2008', 'Sinh viên - Sinh Viên', 2, null, null, 0, null),
+  (1, '403', 'NGUYỄN BÙI ANH THƠ', '0364565578', '082308002786', 'Nữ', '2008', 'Sinh viên', 1, null, null, 0, null),
+  (1, '404', 'NGUYỄN TRÚC NHƯ', '0886268752', '096308009869', 'Nữ', '2008', 'Sinh viên', 1, null, null, 0, null)
 on conflict (house_id, room) do update
-  set tenant = excluded.tenant, phone = excluded.phone, occupancy = excluded.occupancy, move_in = excluded.move_in, email = excluded.email, deposit = excluded.deposit, deposit_date = excluded.deposit_date;
+  set tenant = excluded.tenant, phone = excluded.phone, cccd = excluded.cccd, gender = excluded.gender, birth_year = excluded.birth_year, occupation = excluded.occupation, occupancy = excluded.occupancy, move_in = excluded.move_in, email = excluded.email, deposit = excluded.deposit, deposit_date = excluded.deposit_date;
 
 create table if not exists nhatro_contracts (
   id serial primary key,

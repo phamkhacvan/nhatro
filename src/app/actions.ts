@@ -534,6 +534,10 @@ export async function upsertRooms(rooms: Room[]) {
       room: r.room,
       tenant: r.tenant,
       phone: r.phone,
+      cccd: r.cccd ?? "",
+      gender: r.gender ?? "",
+      birth_year: r.birth_year ?? "",
+      occupation: r.occupation ?? "",
       occupancy: Number(r.occupancy) || 0,
       move_in: r.move_in || null,
       contract_end: r.contract_end || null,
@@ -550,10 +554,10 @@ export async function upsertRooms(rooms: Room[]) {
 
   const { data: monthRows } = await sb
     .from("nhatro_monthly")
-    .select("ky,room,move_in,move_out,occupancy,tenant,phone")
+    .select("ky,room,move_in,move_out,occupancy,tenant,phone,cccd,gender,birth_year,occupation")
     .eq("house_id", house.id);
-  const monthsByRoom = new Map<string, { ky: string; move_in: string | null; move_out: string | null; occupancy: number; tenant: string; phone: string }[]>();
-  for (const r of (monthRows ?? []) as { room: string; ky: string; move_in: string | null; move_out: string | null; occupancy: number; tenant: string; phone: string }[]) {
+  const monthsByRoom = new Map<string, { ky: string; move_in: string | null; move_out: string | null; occupancy: number; tenant: string; phone: string; cccd: string | null; gender: string | null; birth_year: string | null; occupation: string | null }[]>();
+  for (const r of (monthRows ?? []) as { room: string; ky: string; move_in: string | null; move_out: string | null; occupancy: number; tenant: string; phone: string; cccd: string | null; gender: string | null; birth_year: string | null; occupation: string | null }[]) {
     const arr = monthsByRoom.get(r.room) ?? [];
     arr.push(r);
     monthsByRoom.set(r.room, arr);
@@ -561,6 +565,10 @@ export async function upsertRooms(rooms: Room[]) {
   const roomAuditFields: { field: string; dbKey: string }[] = [
     { field: "tenant", dbKey: "tenant" },
     { field: "phone", dbKey: "phone" },
+    { field: "cccd", dbKey: "cccd" },
+    { field: "gender", dbKey: "gender" },
+    { field: "birth_year", dbKey: "birth_year" },
+    { field: "occupation", dbKey: "occupation" },
     { field: "occupancy", dbKey: "occupancy" },
     { field: "move_in", dbKey: "move_in" },
     { field: "contract_end", dbKey: "contract_end" },
@@ -583,6 +591,10 @@ export async function upsertRooms(rooms: Room[]) {
     const newTenant = r.tenant ?? "";
     const newPhone = r.phone ?? "";
     const newOcc = Number(r.occupancy) || 0;
+    const newCccd = r.cccd ?? "";
+    const newGender = r.gender ?? "";
+    const newBirthYear = r.birth_year ?? "";
+    const newOccupation = r.occupation ?? "";
     const changedKys: string[] = [];
     for (const m of monthsByRoom.get(r.room) ?? []) {
       const oldMoveIn = m.move_in ?? null;
@@ -592,7 +604,11 @@ export async function upsertRooms(rooms: Room[]) {
         oldMoveOut !== newMoveOut ||
         m.tenant !== newTenant ||
         m.phone !== newPhone ||
-        Number(m.occupancy) !== newOcc
+        Number(m.occupancy) !== newOcc ||
+        (m.cccd ?? "") !== newCccd ||
+        (m.gender ?? "") !== newGender ||
+        (m.birth_year ?? "") !== newBirthYear ||
+        (m.occupation ?? "") !== newOccupation
       ) {
         changedKys.push(m.ky);
         if (oldMoveIn !== newMoveIn) auditEntries.push({ ky: m.ky, room: r.room, field: "move_in", old_val: oldMoveIn ?? "", new_val: newMoveIn ?? "" });
@@ -607,6 +623,10 @@ export async function upsertRooms(rooms: Room[]) {
           move_out: newMoveOut,
           tenant: r.tenant,
           phone: r.phone,
+          cccd: r.cccd ?? "",
+          gender: r.gender ?? "",
+          birth_year: r.birth_year ?? "",
+          occupation: r.occupation ?? "",
           occupancy: newOcc,
         })
         .eq("house_id", house.id)
