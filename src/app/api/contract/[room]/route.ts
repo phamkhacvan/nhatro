@@ -36,11 +36,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ room
   const fileName = (data.file_name as string).replace(/["\\\r\n]/g, "").slice(0, 120);
   const mime = (data.mime as string) || "application/octet-stream";
   const viewable = /^(application\/pdf|image\/(jpeg|png|webp))$/.test(mime);
+  const download = req.nextUrl.searchParams.get("download") === "1";
   return new Response(new Uint8Array(buf), {
     headers: {
       "Content-Type": mime,
       "Content-Length": String(buf.length),
-      "Content-Disposition": `${viewable ? "inline" : "attachment"}; filename="${fileName}"`,
+      "Content-Disposition": `${download || !viewable ? "attachment" : "inline"}; filename="${fileName}"`,
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",
     },

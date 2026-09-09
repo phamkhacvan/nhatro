@@ -104,7 +104,14 @@ export default function ContractControl({
       {meta ? (
         <>
           <button
-            onClick={() => window.open(`/api/contract/${encodeURIComponent(room)}`, "_blank", "noopener,noreferrer")}
+            onClick={() => {
+              const a = document.createElement("a");
+              a.href = `/api/contract/${encodeURIComponent(room)}?download=1`;
+              a.download = meta.file_name;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+            }}
             className="inline-flex max-w-[220px] items-center gap-1 truncate rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-800 hover:bg-blue-100 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300"
             title={`${meta.file_name} (${fmtSize(meta.size)})`}
           >
