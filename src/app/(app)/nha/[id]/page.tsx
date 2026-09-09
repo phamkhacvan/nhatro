@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 
 export default async function HousePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  let render: { key: number; house: House; initialMonth: Awaited<ReturnType<typeof dataForKy>> } | null = null;
   try {
     const hid = Number(id);
     if (!Number.isFinite(hid)) notFound();
@@ -23,7 +24,7 @@ export default async function HousePage({ params }: { params: Promise<{ id: stri
     if (!house) notFound();
     await activateHouse(hid);
     const initialMonth = await dataForKy(house.cur_ky as string);
-    return <HouseWorkspace key={hid} house={house as House} initialMonth={initialMonth} />;
+    render = { key: hid, house: house as House, initialMonth };
   } catch (err) {
     const msg = String((err as Error)?.message ?? err);
     const stack = (err as Error)?.stack ?? "";
@@ -49,4 +50,6 @@ export default async function HousePage({ params }: { params: Promise<{ id: stri
       </div>
     );
   }
+  if (!render) return null;
+  return <HouseWorkspace key={render.key} house={render.house} initialMonth={render.initialMonth} />;
 }

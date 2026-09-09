@@ -8,23 +8,31 @@ function secretKey(): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
-export async function signSession(uid: number): Promise<string> {
-  return new SignJWT({ sub: String(uid) })
+export async function signSession(uid: number, tv = 0): Promise<string> {
+  return new SignJWT({ sub: String(uid), tv })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("30d")
     .sign(secretKey());
 }
 
-export async function verifySession(token?: string): Promise<number | null> {
+export type SessionData = { id: number; tv: number };
+
+export async function verifySessionData(token?: string): Promise<SessionData | null> {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secretKey());
     const sub = payload.sub;
     if (!sub) return null;
     const id = Number(sub);
-    return Number.isInteger(id) && id > 0 ? id : null;
+    if (!(Number.isInteger(id) && id > 0)) return null;
+    return { id, tv: Number(payload.tv) || 0 };
   } catch {
     return null;
   }
+}
+
+export async function verifySession(token?: string): Promise<number | null> {
+  const data = await verifySessionData(token);
+  return data ? data.id : null;
 }

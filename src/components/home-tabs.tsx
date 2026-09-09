@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useActionState } from "react";
 import Link from "next/link";
 import { fmt, displayKy } from "@/lib/calc";
 import { createHouse } from "@/app/actions";
@@ -195,6 +195,7 @@ function HouseCard({ h, active, idx }: { h: HouseData; active: number; idx: numb
 export default function HomeTabs({ active, houses, totalCumRevenue = 0, totalCumPaid = 0 }: { active: number; houses: HouseData[]; totalCumRevenue?: number; totalCumPaid?: number }) {
   const [query, setQuery] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [formState, formAction, formPending] = useActionState(createHouse, null);
 
   const totalRev = houses.reduce((a, h) => a + h.revenue, 0);
   const totalPaid = houses.reduce((a, h) => a + h.paid, 0);
@@ -265,9 +266,8 @@ export default function HomeTabs({ active, houses, totalCumRevenue = 0, totalCum
 
         {showForm && (
           <form
-            action={createHouse}
-            onSubmit={() => setShowForm(false)}
-            className="mb-6 flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-indigo-200/60 sm:flex-row dark:bg-slate-900 dark:ring-indigo-500/30"
+            action={formAction}
+            className="mb-6 flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-indigo-200/60 sm:flex-row sm:flex-wrap dark:bg-slate-900 dark:ring-indigo-500/30"
           >
             <input
               name="name"
@@ -282,10 +282,14 @@ export default function HomeTabs({ active, houses, totalCumRevenue = 0, totalCum
             />
             <button
               type="submit"
-              className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-200 transition hover:bg-indigo-500"
+              disabled={formPending}
+              className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-200 transition hover:bg-indigo-500 disabled:opacity-50"
             >
-              Tạo nhà
+              {formPending ? "Đang tạo…" : "Tạo nhà"}
             </button>
+            {formState?.error && (
+              <p className="w-full text-sm font-medium text-red-500">{formState.error}</p>
+            )}
           </form>
         )}
 

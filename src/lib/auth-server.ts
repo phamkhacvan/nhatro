@@ -3,7 +3,7 @@ import { cache } from "react";
 import { cookies } from "next/headers";
 import { randomBytes, scryptSync, timingSafeEqual, createHash } from "node:crypto";
 import { sb } from "@/lib/supabase";
-import { verifySession, SESSION_COOKIE } from "@/lib/auth";
+import { verifySession, verifySessionData, SESSION_COOKIE } from "@/lib/auth";
 
 export type SessionUser = {
   id: number;
@@ -19,13 +19,21 @@ export async function sessionUid(): Promise<number | null> {
   return verifySession(store.get(SESSION_COOKIE)?.value);
 }
 
+// Đọc uid + token_version từ session cookie (để so sánh khi đổi mật khẩu)
+export async function sessionData(): Promise<{ id: number; tv: number } | null> {
+  const store = await cookies();
+  return verifySessionData(store.get(SESSION_COOKIE)?.value);
+}
+
 // Lấy user hiện tại từ DB (server-component / server-action)
 // cache() giúp tránh query lặp nhiều lần trong cùng 1 request
+// Session bị thu hồi nếu token_version đổi sau khi đổi mật khẩu
 export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
-  const uid = await sessionUid();
-  if (!uid) return null;
-  const { data } = await sb.from("nhatro_users").select("*").eq("id", uid).single();
+  const sess = await sessionData();
+  if (!sess) return null;
+  const { data } = await sb.from("nhatro_users").select("*").eq("id", sess.id).single();
   if (!data) return null;
+  if (Number(data.token_version ?? 0) !== sess.tv) return null;
   return {
     id: data.id as number,
     email: data.email as string,

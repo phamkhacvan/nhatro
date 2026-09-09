@@ -101,7 +101,8 @@ export async function login(email: string, password: string): Promise<{ ok: bool
     if (ok) {
       await sb.from("nhatro_login_attempts").delete().eq("ip", ip);
       const uid = (user as { id: number }).id;
-      const token = await signSession(uid);
+      const tv = Number((user as { token_version?: number }).token_version ?? 0);
+      const token = await signSession(uid, tv);
       const store = await cookies();
       store.set(SESSION_COOKIE, token, {
         httpOnly: true,
@@ -151,34 +152,45 @@ export async function register(input: { name: string; email: string; password: s
   if (existing) return { ok: false, error: "Email này đã được đăng ký." };
 
   // Chỉ user đầu tiên mới được claim các nhà chưa có chủ (dữ liệu hiện có)
+  // Unique index nhatro_users_single_admin (partial) chốt đúng 1 admin nếu 2 người đăng ký cùng lúc
   const { data: userCount } = await sb.from("nhatro_users").select("id", { count: "exact", head: true });
   const isFirstUser = (userCount ?? 0) === 0;
+  let isAdmin = isFirstUser;
   let firstHouseId: number | null = null;
   if (isFirstUser) {
     const { data: unowned } = await sb.from("nhatro_houses").select("id").is("owner_id", null).order("id");
     firstHouseId = ((unowned ?? [])[0] as { id?: number } | undefined)?.id ?? null;
   }
 
-  const { data: created, error } = await sb
-    .from("nhatro_users")
-    .insert({
-      name,
-      email,
-      password_hash: hashPassword(input.password),
-      active_house_id: firstHouseId,
-      is_admin: isFirstUser,
-    })
-    .select()
-    .single();
-  if (error) return { ok: false, error: error.message };
-  const uid = (created as { id: number }).id;
+  const insertUser = (admin: boolean) =>
+    sb
+      .from("nhatro_users")
+      .insert({
+        name,
+        email,
+        password_hash: hashPassword(input.password),
+        active_house_id: firstHouseId,
+        is_admin: admin,
+      })
+      .select()
+      .single();
 
-  if (isFirstUser) {
+  let inserted = await insertUser(isAdmin);
+  if (inserted.error?.code === "23505" && isFirstUser) {
+    // User khác vừa giành ngôi admin trước → đăng ký như tài khoản thường
+    isAdmin = false;
+    inserted = await insertUser(false);
+  }
+  const error = inserted.error;
+  if (error) return { ok: false, error: error.message };
+  const uid = (inserted.data as { id: number }).id;
+
+  if (isAdmin) {
     // Claim TOÀN BỘ nhà chưa có chủ (2 nhà trọ của bạn) cho user đầu tiên
     await sb.from("nhatro_houses").update({ owner_id: uid }).is("owner_id", null);
   }
 
-  const token = await signSession(uid);
+  const token = await signSession(uid, 0);
   const store = await cookies();
   store.set(SESSION_COOKIE, token, {
     httpOnly: true,
@@ -375,6 +387,7 @@ async function ensureMonth(ky: string, houseId: number): Promise<void> {
 }
 
 export async function saveMonth(ky: string, rows: MonthlyRow[]) {
+  if (ky > formatKyNow()) return { ok: false, error: "Chưa đến thời điểm này." };
   const house = await getActiveHouse();
   const nk = nextKy(ky);
   const [{ data: roomList }, { data: existing }, { data: nextMonthRows }] = await Promise.all([
@@ -1148,11 +1161,11 @@ export async function setActiveHouse(formData: FormData) {
   redirect("/bang-tinh");
 }
 
-export async function createHouse(formData: FormData) {
-  const name = String(formData.get("name") ?? "").trim();
-  if (!name) return;
+export async function createHouse(prev: { ok: boolean; error?: string } | null, formData: FormData): Promise<{ ok: boolean; error?: string }> {
   const user = await getCurrentUser();
-  if (!user) return;
+  if (!user) return { ok: false, error: "Chưa đăng nhập." };
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) return { ok: false, error: "Vui lòng nhập tên nhà trọ." };
   const address = String(formData.get("address") ?? "").trim();
   const curKy = formatKyNow();
   const { data, error } = await sb
@@ -1160,11 +1173,15 @@ export async function createHouse(formData: FormData) {
     .insert({ name, address: address || null, cur_ky: curKy, owner_id: user.id })
     .select()
     .single();
-  if (error || !data) return;
-  await sb.from("nhatro_prices").insert([
+  if (error || !data) return { ok: false, error: error?.message || "Không tạo được nhà trọ. Thử lại." };
+  const { error: priceErr } = await sb.from("nhatro_prices").insert([
     { house_id: data.id, occupancy: 1, price: 2500000 },
     { house_id: data.id, occupancy: 2, price: 3000000 },
   ]);
+  if (priceErr) {
+    await sb.from("nhatro_houses").delete().eq("id", data.id);
+    return { ok: false, error: priceErr.message };
+  }
   await sb.from("nhatro_users").update({ active_house_id: data.id }).eq("id", user.id);
   revalidatePath("/", "layout");
   redirect(`/nha/${data.id}`);
@@ -1456,11 +1473,21 @@ export async function changeOwnPassword(current: string, next: string): Promise<
   const user = await getCurrentUser();
   if (!user) return { ok: false, error: "Chưa đăng nhập." };
   if (next.length < 6) return { ok: false, error: "Mật khẩu mới phải có ít nhất 6 ký tự." };
-  const { data: rec } = await sb.from("nhatro_users").select("password_hash").eq("id", user.id).single();
+  const { data: rec } = await sb.from("nhatro_users").select("password_hash, token_version").eq("id", user.id).single();
   if (!rec || !verifyPassword(current, (rec as { password_hash: string }).password_hash)) {
     return { ok: false, error: "Mật khẩu hiện tại không đúng." };
   }
-  await sb.from("nhatro_users").update({ password_hash: hashPassword(next) }).eq("id", user.id);
+  const tv = Number((rec as { token_version?: number }).token_version ?? 0) + 1;
+  await sb.from("nhatro_users").update({ password_hash: hashPassword(next), token_version: tv }).eq("id", user.id);
+  // Giữ phiên hiện tại, thu hồi các thiết bị khác (token_version cũ)
+  const store = await cookies();
+  store.set(SESSION_COOKIE, await signSession(user.id, tv), {
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+  });
   return { ok: true };
 }
 
@@ -1468,6 +1495,8 @@ export async function adminResetPassword(userId: number, next: string): Promise<
   const me = await getCurrentUser();
   if (!me?.is_admin) return { ok: false, error: "Không có quyền." };
   if (next.length < 6) return { ok: false, error: "Mật khẩu mới phải có ít nhất 6 ký tự." };
-  await sb.from("nhatro_users").update({ password_hash: hashPassword(next) }).eq("id", userId);
+  const { data: rec } = await sb.from("nhatro_users").select("token_version").eq("id", userId).single();
+  const tv = Number((rec as { token_version?: number }).token_version ?? 0) + 1;
+  await sb.from("nhatro_users").update({ password_hash: hashPassword(next), token_version: tv }).eq("id", userId);
   return { ok: true };
 }

@@ -150,16 +150,6 @@ export function penaltyFor(nights: number, violations: number): number {
   return (n <= 2 ? 0 : 200000 + Math.max(0, n - 3) * 250000) + v * 500000;
 }
 
-export function vietQrUrl(opts: {
-  bankCode: string;
-  accountNumber: string;
-  amount: number;
-  reference: string;
-}): string {
-  const { bankCode, accountNumber, amount, reference } = opts;
-  return `https://img.vietqr.io/image/${bankCode}-${accountNumber}-compact.png?amount=${amount}&addInfo=${encodeURIComponent(reference)}`;
-}
-
 export function vietQrLocalUrl(opts: {
   bankCode: string;
   accountNumber: string;
