@@ -4,6 +4,24 @@ export const dynamic = "force-dynamic";
 
 export const runtime = "nodejs";
 
+// Rate-limit theo IP (fixed window trong bộ nhớ). Chạy trên serverless nên chỉ là
+// best-effort theo instance, nhưng đủ chặn abuse cơ bản vì endpoint này không cần auth
+// (tenants mở QR từ email mà không cần tài khoản).
+const WINDOW_MS = 60_000;
+const MAX_PER_WINDOW = 60;
+const hits = new Map<string, { n: number; at: number }>();
+
+function allow(ip: string): boolean {
+  const now = Date.now();
+  const rec = hits.get(ip);
+  if (!rec || now - rec.at > WINDOW_MS) {
+    hits.set(ip, { n: 1, at: now });
+    return true;
+  }
+  rec.n += 1;
+  return rec.n <= MAX_PER_WINDOW;
+}
+
 export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams;
   const ref = (p.get("ref") || "").normalize("NFC").slice(0, 40);
@@ -20,6 +38,14 @@ export async function GET(req: NextRequest) {
     !acc
   ) {
     return new Response("invalid qr params", { status: 400 });
+  }
+
+  const ip =
+    (req.headers.get("x-forwarded-for") ?? "").split(",")[0]?.trim() ||
+    req.headers.get("x-real-ip") ||
+    "unknown";
+  if (!allow(ip)) {
+    return new Response("too many requests", { status: 429 });
   }
 
   const url = `https://img.vietqr.io/image/${bank}-${acc}-compact.png?amount=${amount}&addInfo=${encodeURIComponent(ref)}`;

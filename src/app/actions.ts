@@ -256,8 +256,15 @@ export async function getBanks(): Promise<Bank[]> {
 }
 
 function formatKyNow(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const y = parts.find((p) => p.type === "year")!.value;
+  const m = parts.find((p) => p.type === "month")!.value;
+  return `${y}-${m}`;
 }
 
 async function healMonthIntegrity(houseId: number, curKy: string | null): Promise<void> {
@@ -1037,8 +1044,9 @@ export async function dashboardData() {
   }
   const out = houseList.map((h) => {
     const houseRooms = (rooms ?? []).filter((r: Room) => r.house_id === h.id);
-    const curRows = byHouseKy.get(`${h.id}|${h.cur_ky}`) ?? [];
-    const prevRowsH = byHouseKy.get(`${h.id}|${prevKy(h.cur_ky)}`) ?? [];
+    const curKy = h.cur_ky;
+    const curRows = curKy ? byHouseKy.get(`${h.id}|${curKy}`) ?? [] : [];
+    const prevRowsH = curKy ? byHouseKy.get(`${h.id}|${prevKy(curKy)}`) ?? [] : [];
     const computed = computeRows(
       h,
       priceMapByHouse.get(h.id) ?? {},
@@ -1146,8 +1154,7 @@ export async function createHouse(formData: FormData) {
   const user = await getCurrentUser();
   if (!user) return;
   const address = String(formData.get("address") ?? "").trim();
-  const now = new Date();
-  const curKy = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const curKy = formatKyNow();
   const { data, error } = await sb
     .from("nhatro_houses")
     .insert({ name, address: address || null, cur_ky: curKy, owner_id: user.id })
@@ -1171,7 +1178,15 @@ function esc(s: unknown): string {
     .replace(/"/g, "&quot;");
 }
 
-function buildPhieuHtml(house: House, c: ComputedRow, ky: string): string {
+async function appBaseUrl(): Promise<string> {
+  const envUrl = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "");
+  if (envUrl) return envUrl;
+  const host = (await headers()).get("host");
+  if (host) return /^localhost(:\d+)?$/.test(host) ? `http://${host}` : `https://${host}`;
+  return "https://nhatro-ten.vercel.app";
+}
+
+function buildPhieuHtml(house: House, c: ComputedRow, ky: string, baseUrl: string): string {
   const pDateStr = fmtDateVi(c.prevCloseDate);
   const oDateStr =
     c.prevMoveIn && c.prevMoveIn.slice(0, 7) === prevKy(ky) ? fmtDateVi(c.prevMoveIn) : null;
@@ -1203,8 +1218,7 @@ function buildPhieuHtml(house: House, c: ComputedRow, ky: string): string {
     .join("");
   const qrUrl =
     house.bank_code && house.bank_account
-      ? "https://nhatro-ten.vercel.app" +
-        vietQrLocalUrl({
+      ? baseUrl + vietQrLocalUrl({
           bankCode: house.bank_code,
           accountNumber: house.bank_account,
           amount: c.remain,
@@ -1314,6 +1328,7 @@ export async function sendPhieuEmail(ky: string, room: string) {
   if (!to) return { ok: false, error: "Phòng chưa có email người thuê trong Cài đặt." };
   const synced = applyRoomSync([row as MonthlyRow], (roomRow ? [roomRow] : []) as Room[])[0] as MonthlyRow;
   const c = computeRow(house, pricesToMap(prices ?? []), synced, (prevRow ?? null) as MonthlyRow | null);
+  const baseUrl = await appBaseUrl();
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
@@ -1322,7 +1337,7 @@ export async function sendPhieuEmail(ky: string, room: string) {
       to: [to],
       cc: ["info@legaleader.com"],
       subject: `Phiếu thu tiền trọ ${displayKy(ky)} - Phòng ${c.room}`,
-      html: buildPhieuHtml(house, c, ky),
+      html: buildPhieuHtml(house, c, ky, baseUrl),
     }),
   });
   const json = (await res.json().catch(() => ({}))) as { message?: string };

@@ -1,7 +1,7 @@
 "use client";
 
 import { setCurrentMonth } from "@/app/actions";
-import { parseKy, formatKy } from "@/lib/calc";
+import { parseKy, formatKy, nextKy } from "@/lib/calc";
 
 export default function MonthSelector({
   ky,
@@ -28,7 +28,7 @@ export default function MonthSelector({
     if (nk === ky) return;
     if (minKy && nk < minKy) return;
     if (nk > formatKy(realMonth, realYear)) return;
-    if (setCurrent && nk > ky) setCurrentMonth(nk).catch(() => {});
+    if (setCurrent && nk === nextKy(ky)) setCurrentMonth(nk).catch(() => {});
     if (onSelect) {
       onSelect(nk);
       return;
