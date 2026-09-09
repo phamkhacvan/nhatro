@@ -6,7 +6,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ room: string }> }) {
-  const user = await getCurrentUser();
+  try {
+    const user = await getCurrentUser();
   if (!user) return new Response("unauthorized", { status: 401 });
   const { room } = await params;
   const roomClean = decodeURIComponent(room).trim();
@@ -34,6 +35,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ room
 
   const buf = Buffer.from(data.data as string, "base64");
   const fileName = (data.file_name as string).replace(/["\\\r\n]/g, "").slice(0, 120);
+  const ascii = fileName.replace(/[^\x20-\x7e]/g, "_") || "contract";
+  const enc = encodeURIComponent(fileName);
   const mime = (data.mime as string) || "application/octet-stream";
   const viewable = /^(application\/pdf|image\/(jpeg|png|webp))$/.test(mime);
   const download = req.nextUrl.searchParams.get("download") === "1";
@@ -41,9 +44,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ room
     headers: {
       "Content-Type": mime,
       "Content-Length": String(buf.length),
-      "Content-Disposition": `${download || !viewable ? "attachment" : "inline"}; filename="${fileName}"`,
+      "Content-Disposition": `${download || !viewable ? "attachment" : "inline"}; filename="${ascii}"; filename*=UTF-8''${enc}`,
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",
     },
   });
+  } catch (err) {
+    return new Response(`contract-error: ${String((err as Error)?.message ?? err)}`, { status: 500 });
+  }
 }

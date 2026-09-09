@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { uploadContract, deleteContract, getContractMeta } from "@/app/actions";
+import { uploadContract, deleteContract, getContractMeta, getContractFile } from "@/app/actions";
 import { ContractMeta } from "@/lib/types";
 import { showToast } from "@/components/toast";
 
@@ -89,14 +89,20 @@ export default function ContractControl({
   }
 
   function onDownload() {
-    fetch(`/api/contract/${encodeURIComponent(room)}`)
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const blob = await res.blob();
+    getContractFile(room)
+      .then((res) => {
+        if (!res.ok || !res.base64) {
+          showToast("error", res.error || "Không tải được hợp đồng.");
+          return;
+        }
+        const bin = atob(res.base64);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        const blob = new Blob([arr], { type: res.mime });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = meta?.file_name ?? "hop-dong";
+        a.download = res.file_name ?? "hop-dong";
         document.body.appendChild(a);
         a.click();
         a.remove();

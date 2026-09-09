@@ -702,6 +702,24 @@ export async function uploadContract(room: string, formData: FormData): Promise<
   return { ok: true };
 }
 
+export async function getContractFile(
+  room: string
+): Promise<{ ok: boolean; file_name?: string; mime?: string; base64?: string; error?: string }> {
+  const house = await getActiveHouse();
+  try {
+    const { data, error } = await sb
+      .from("nhatro_contracts")
+      .select("file_name, mime, data")
+      .eq("house_id", house.id)
+      .eq("room", room)
+      .maybeSingle();
+    if (error || !data) return { ok: false, error: error?.message || "Không có hợp đồng." };
+    return { ok: true, file_name: data.file_name, mime: data.mime, base64: data.data };
+  } catch (err) {
+    return { ok: false, error: `contract-error: ${String((err as Error)?.message ?? err)}` };
+  }
+}
+
 export async function deleteContract(room: string): Promise<{ ok: boolean; error?: string }> {
   const house = await getActiveHouse();
   const { data: oldDoc } = await sb
