@@ -19,7 +19,7 @@ export default async function PhieuPage({
     sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", ky).eq("room", room).single(),
     sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", prevKy(ky)).eq("room", room).maybeSingle(),
     sb.from("nhatro_rooms").select("*").eq("house_id", house.id).eq("room", room).single(),
-    sb.from("nhatro_prices").select("*").eq("house_id", house.id),
+    sb.from("nhatro_prices").select("*").eq("house_id", house.id).order("occupancy"),
   ]);
 
   if (!row || !house) notFound();

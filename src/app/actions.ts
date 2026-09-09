@@ -444,10 +444,41 @@ export async function setCurrentMonth(ky: string) {
   return { ok: true, ky };
 }
 
-export async function updateSettings(data: Partial<House>) {
+const SETTINGS_WHITELIST = [
+  "name",
+  "address",
+  "due_text",
+  "transfer_note",
+  "note",
+  "elec_rate",
+  "water_rate",
+  "wifi_rate",
+  "max_occupancy",
+  "bank_code",
+  "bank_account",
+  "bank_name",
+] as const;
+
+export async function updateSettings(data: Partial<House> & Record<string, unknown>): Promise<{ ok: boolean; error?: string }> {
+  const err = (msg: string) => ({ ok: false, error: msg });
+  const update: Record<string, unknown> = {};
+  for (const f of SETTINGS_WHITELIST) {
+    if (f in data) update[f] = data[f];
+  }
+  for (const num of ["elec_rate", "water_rate", "wifi_rate"] as const) {
+    if (!(num in update)) continue;
+    const v = Number(update[num]);
+    if (!Number.isFinite(v) || v < 0) return err("Giá điện/nước/wifi phải là số lớn hơn hoặc bằng 0.");
+    update[num] = v;
+  }
+  if ("max_occupancy" in update) {
+    const v = Number(update.max_occupancy);
+    if (!Number.isInteger(v) || v < 1 || v > 20) return err("Số người tối đa phải là số nguyên từ 1 đến 20.");
+    update.max_occupancy = v;
+  }
   const house = await getActiveHouse();
   const { data: oldHouse } = await sb.from("nhatro_houses").select("bank_code,bank_account,bank_name").eq("id", house.id).single();
-  const { error } = await sb.from("nhatro_houses").update(data).eq("id", house.id);
+  const { error } = await sb.from("nhatro_houses").update(update).eq("id", house.id);
   if (error) return { ok: false, error: error.message };
   const auditEntries: { room?: string; field: string; old_val: string; new_val: string }[] = [];
   for (const f of ["bank_code", "bank_account", "bank_name"] as const) {
@@ -460,19 +491,36 @@ export async function updateSettings(data: Partial<House>) {
   return { ok: true };
 }
 
-export async function upsertPrices(prices: { occupancy: number; price: number }[]) {
+export async function upsertPrices(prices: { occupancy: number; price: number }[]): Promise<{ ok: boolean; error?: string }> {
   const house = await getActiveHouse();
+  const seen = new Set<number>();
+  for (const p of prices) {
+    const occ = Number(p.occupancy);
+    const price = Number(p.price);
+    if (!Number.isInteger(occ) || occ < 1 || occ > 20) {
+      return { ok: false, error: `Số người của bảng giá không hợp lệ (${String(p.occupancy)}).` };
+    }
+    if (!Number.isFinite(price) || price < 0) {
+      return { ok: false, error: `Giá phòng ${occ} người phải là số lớn hơn hoặc bằng 0.` };
+    }
+    if (seen.has(occ)) {
+      return { ok: false, error: `Giá phòng ${occ} người bị trùng trong danh sách gửi lên.` };
+    }
+    seen.add(occ);
+  }
   const { data: oldPrices } = await sb.from("nhatro_prices").select("occupancy,price").eq("house_id", house.id);
   const oldMap = new Map((oldPrices ?? []).map((p: { occupancy: number; price: number }) => [p.occupancy, p.price]));
   const auditEntries: { room?: string; field: string; old_val: string; new_val: string }[] = [];
   for (const p of prices) {
-    const ov = String(oldMap.get(p.occupancy) ?? "");
-    const nv = String(Number(p.price));
-    if (ov !== nv) auditEntries.push({ room: `price_${p.occupancy}`, field: "price", old_val: ov, new_val: nv });
+    const occ = Number(p.occupancy);
+    const price = Number(p.price);
+    const ov = String(oldMap.get(occ) ?? "");
+    const nv = String(price);
+    if (ov !== nv) auditEntries.push({ room: `price_${occ}`, field: "price", old_val: ov, new_val: nv });
     const { error } = await sb
       .from("nhatro_prices")
       .upsert(
-        { house_id: house.id, occupancy: p.occupancy, price: Number(p.price) },
+        { house_id: house.id, occupancy: occ, price },
         { onConflict: "house_id,occupancy" }
       );
     if (error) return { ok: false, error: error.message };
@@ -785,7 +833,7 @@ export async function dataForKy(ky: string) {
     { data: prevRows },
   ] = await Promise.all([
     sb.from("nhatro_rooms").select("*").eq("house_id", house.id).eq("active", true).order("room"),
-    sb.from("nhatro_prices").select("*").eq("house_id", house.id),
+    sb.from("nhatro_prices").select("*").eq("house_id", house.id).order("occupancy"),
     sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", ky).order("room"),
     sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", prev),
   ]);
@@ -861,7 +909,7 @@ export async function listMonths() {
   }
   if (!house) return [];
   const [{ data: prices }, { data: rooms }, { data: all }] = await Promise.all([
-    sb.from("nhatro_prices").select("*").eq("house_id", house.id),
+    sb.from("nhatro_prices").select("*").eq("house_id", house.id).order("occupancy"),
     sb.from("nhatro_rooms").select("*").eq("house_id", house.id).eq("active", true),
     sb.from("nhatro_monthly").select("*").eq("house_id", house.id),
   ]);
@@ -916,7 +964,7 @@ export async function dashboardData() {
   if (houseList.length === 0) return { active: 0, houses: [], totalCumRevenue: 0, totalCumPaid: 0 };
   const ids = houseList.map((h) => h.id);
   const [{ data: prices }, { data: rooms }, { data: monthly }] = await Promise.all([
-    sb.from("nhatro_prices").select("*").in("house_id", ids),
+    sb.from("nhatro_prices").select("*").in("house_id", ids).order("occupancy"),
     sb.from("nhatro_rooms").select("*").eq("active", true).in("house_id", ids),
     sb.from("nhatro_monthly").select("*").in("house_id", ids),
   ]);
@@ -1215,7 +1263,7 @@ export async function sendPhieuEmail(ky: string, room: string) {
     sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", ky).eq("room", room).single(),
     sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", prevKy(ky)).eq("room", room).maybeSingle(),
     sb.from("nhatro_rooms").select("*").eq("house_id", house.id).eq("room", room).single(),
-    sb.from("nhatro_prices").select("*").eq("house_id", house.id),
+    sb.from("nhatro_prices").select("*").eq("house_id", house.id).order("occupancy"),
   ]);
   if (!row) return { ok: false, error: "Không có dữ liệu phiếu cho phòng này." };
   const to = (roomRow as Room | null)?.email?.trim();
@@ -1244,7 +1292,7 @@ export async function confirmPayment(ky: string, room: string, amount?: number) 
     sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", ky).eq("room", room).single(),
     sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", prevKy(ky)).eq("room", room).maybeSingle(),
     sb.from("nhatro_rooms").select("*").eq("house_id", house.id).eq("room", room).single(),
-    sb.from("nhatro_prices").select("*").eq("house_id", house.id),
+    sb.from("nhatro_prices").select("*").eq("house_id", house.id).order("occupancy"),
   ]);
   if (!row) return { ok: false, error: "Không tìm thấy dữ liệu." };
 
@@ -1320,6 +1368,8 @@ export type UserAccount = {
 };
 
 export async function listUsers(): Promise<UserAccount[]> {
+  const me = await getCurrentUser();
+  if (!me?.is_admin) return [];
   const { data: users } = await sb.from("nhatro_users").select("*").order("id");
   if (!users) return [];
   const { data: houses } = await sb.from("nhatro_houses").select("owner_id");
