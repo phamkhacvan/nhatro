@@ -402,7 +402,7 @@ export async function saveMonth(ky: string, rows: MonthlyRow[]) {
     };
   });
 
-  const fieldsToTrack: (keyof MonthlyRow)[] = ["old_date", "new_index", "close_date", "move_in", "move_out", "nights", "violations", "paid"];
+  const fieldsToTrack: (keyof MonthlyRow)[] = ["old_index", "old_date", "new_index", "close_date", "move_in", "move_out", "nights", "violations", "paid"];
   const auditEntries: { ky?: string; room: string; field: string; old_val: string; new_val: string }[] = [];
   for (const u of upserts) {
     const old = existMap.get(u.room);
@@ -421,10 +421,10 @@ export async function saveMonth(ky: string, rows: MonthlyRow[]) {
   if (error) return { ok: false, error: error.message };
   const next = nextKy(ky);
   for (const u of upserts) {
-    const nextOldIndex = u.new_index ?? u.old_index ?? null;
+    if (u.new_index == null || u.close_date == null) continue;
     await sb
       .from("nhatro_monthly")
-      .update({ old_index: nextOldIndex, old_date: u.close_date ?? null })
+      .update({ old_index: u.new_index, old_date: u.close_date })
       .eq("house_id", house.id)
       .eq("ky", next)
       .eq("room", u.room);
