@@ -88,6 +88,23 @@ export default function ContractControl({
       });
   }
 
+  function onDownload() {
+    fetch(`/api/contract/${encodeURIComponent(room)}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = meta?.file_name ?? "hop-dong";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      })
+      .catch(() => showToast("error", "Không tải được hợp đồng."));
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-2">
       <input
@@ -104,14 +121,7 @@ export default function ContractControl({
       {meta ? (
         <>
           <button
-            onClick={() => {
-              const a = document.createElement("a");
-              a.href = `/api/contract/${encodeURIComponent(room)}?download=1`;
-              a.download = meta.file_name;
-              document.body.appendChild(a);
-              a.click();
-              a.remove();
-            }}
+            onClick={onDownload}
             className="inline-flex max-w-[220px] items-center gap-1 truncate rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-800 hover:bg-blue-100 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300"
             title={`${meta.file_name} (${fmtSize(meta.size)})`}
           >
