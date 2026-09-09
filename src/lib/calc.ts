@@ -29,16 +29,14 @@ export function applyRoomSync(
   const occMap = new Map<string, number>(rooms.map((r) => [r.room, Number(r.occupancy) || 0]));
   const tenantMap = new Map<string, string>(rooms.map((r) => [r.room, r.tenant]));
   const phoneMap = new Map<string, string>(rooms.map((r) => [r.room, r.phone]));
-  const moveInMap = new Map<string, string | null>(rooms.map((r) => [r.room, r.move_in ?? null]));
-  const moveOutMap = new Map<string, string | null>(rooms.map((r) => [r.room, r.contract_end ?? null]));
   const machineMap = new Map<string, boolean>(rooms.map((r) => [r.room, Boolean(r.washing_machine)]));
   return rows.map((r) => ({
     ...r,
     occupancy: hist ? r.occupancy : (occMap.get(r.room) ?? r.occupancy),
     tenant: tenantMap.get(r.room) ?? r.tenant,
     phone: phoneMap.get(r.room) ?? r.phone,
-    move_in: hist ? (r.move_in ?? null) : (r.move_in ?? moveInMap.get(r.room) ?? null),
-    move_out: hist ? (r.move_out ?? null) : (r.move_out ?? moveOutMap.get(r.room) ?? null),
+    move_in: r.move_in ?? null,
+    move_out: r.move_out ?? null,
     washing_machine: machineMap.has(r.room) ? machineMap.get(r.room) : r.washing_machine,
   }));
 }

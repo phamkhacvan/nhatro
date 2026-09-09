@@ -354,8 +354,8 @@ async function ensureMonth(ky: string, houseId: number): Promise<void> {
       old_date,
       new_index: null,
       close_date: null,
-      move_in: room.move_in ?? null,
-      move_out: room.contract_end ?? null,
+      move_in: room.move_in && room.move_in.slice(0, 7) === ky ? room.move_in : null,
+      move_out: null,
       nights: 0,
       violations: 0,
       guest: 0,
@@ -609,8 +609,6 @@ export async function upsertRooms(rooms: Room[]) {
       await sb
         .from("nhatro_monthly")
         .update({
-          move_in: newMoveIn,
-          move_out: newMoveOut,
           tenant: r.tenant,
           phone: r.phone,
           cccd: r.cccd ?? "",
@@ -623,12 +621,28 @@ export async function upsertRooms(rooms: Room[]) {
         .eq("room", r.room)
         .in("ky", changedKys);
     }
+    if (newMoveIn) {
+      await sb
+        .from("nhatro_monthly")
+        .update({ move_in: newMoveIn })
+        .eq("house_id", house.id)
+        .eq("room", r.room)
+        .eq("ky", newMoveIn.slice(0, 7));
+    }
+    if (newMoveOut) {
+      await sb
+        .from("nhatro_monthly")
+        .update({ move_out: newMoveOut })
+        .eq("house_id", house.id)
+        .eq("room", r.room)
+        .eq("ky", newMoveOut.slice(0, 7));
+    }
     const initial = r.initial_index == null ? null : Number(r.initial_index);
     const miKy = r.move_in ? r.move_in.slice(0, 7) : null;
     if (initial != null && miKy) {
       await sb
         .from("nhatro_monthly")
-        .update({ old_index: initial })
+        .update({ old_index: initial, old_date: r.move_in })
         .eq("house_id", house.id)
         .eq("ky", miKy)
         .eq("room", r.room);
@@ -794,7 +808,7 @@ const old_index = p ? (p.new_index ?? p.old_index) : null;
         old_date: p ? (p.close_date ?? null) : null,
         new_index: null,
         close_date: null,
-        move_in: room.move_in ?? null,
+        move_in: room.move_in && room.move_in.slice(0, 7) === ky ? room.move_in : null,
         move_out: null,
         nights: 0,
         violations: 0,
