@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import { Room, ContractMeta, House } from "@/lib/types";
-import { upsertRooms } from "@/app/actions";
+import { upsertRooms, deleteRoom } from "@/app/actions";
 import { isoToVi, viToIso, maskDate, formatThousand, parseThousand } from "@/lib/calc";
 import { showToast } from "@/components/toast";
 import ContractControl from "@/components/contract-control";
@@ -143,10 +143,15 @@ export default function RoomsManager({
       active: true,
     }));
     setSaving(true);
-    upsertRooms(data)
+    const keep = new Set(data.map((d) => d.room));
+    const removed = rooms
+      .map((r) => r.room.trim())
+      .filter((r) => r && !keep.has(r));
+    Promise.all([upsertRooms(data), ...removed.map((r) => deleteRoom(r))])
       .then((res) => {
         setSaving(false);
-        if (!res.ok) showToast("error", res.error || "Lưu thất bại.");
+        const fail = res.find((r) => !r.ok);
+        if (fail) showToast("error", fail.error || "Lưu thất bại.");
         else {
           showToast("success", "Lưu thành công");
           setSavedSnap(listKey);

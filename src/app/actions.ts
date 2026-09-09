@@ -369,14 +369,19 @@ async function ensureMonth(ky: string, houseId: number): Promise<void> {
 
 export async function saveMonth(ky: string, rows: MonthlyRow[]) {
   const house = await getActiveHouse();
-  const [{ data: roomList }, { data: existing }] = await Promise.all([
+  const nk = nextKy(ky);
+  const [{ data: roomList }, { data: existing }, { data: nextMonthRows }] = await Promise.all([
     sb.from("nhatro_rooms").select("room, occupancy, tenant, phone").eq("house_id", house.id),
     sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", ky),
+    sb.from("nhatro_monthly").select("room, old_index, old_date").eq("house_id", house.id).eq("ky", nk),
   ]);
   const occMap = new Map<string, number>((roomList ?? []).map((r) => [r.room, Number(r.occupancy) || 0]));
   const tenantMap = new Map<string, string>((roomList ?? []).map((r) => [r.room, r.tenant]));
   const phoneMap = new Map<string, string>((roomList ?? []).map((r) => [r.room, r.phone]));
   const existMap = new Map<string, MonthlyRow>((existing ?? []).map((r: MonthlyRow) => [r.room, r]));
+  const nextMap = new Map<string, { room: string; old_index: number | null; old_date: string | null }>(
+    (nextMonthRows ?? []).map((r) => [r.room, r as { room: string; old_index: number | null; old_date: string | null }])
+  );
   const upserts = rows.map((r) => {
     const ni: unknown = r.new_index;
     const ci: unknown = r.close_date;
@@ -388,7 +393,7 @@ export async function saveMonth(ky: string, rows: MonthlyRow[]) {
       room: r.room,
       tenant: tenantMap.get(r.room) ?? r.tenant,
       phone: phoneMap.get(r.room) ?? r.phone,
-      occupancy: occMap.get(r.room) ?? (Number(r.occupancy) || 0),
+      occupancy: ky === house.cur_ky ? occMap.get(r.room) ?? (Number(r.occupancy) || 0) : Number(r.occupancy) || 0,
       old_index: r.old_index ?? null,
       old_date: r.old_date ?? null,
       new_index: ni == null || ni === "" ? null : Number(ni),
@@ -419,14 +424,21 @@ export async function saveMonth(ky: string, rows: MonthlyRow[]) {
     .from("nhatro_monthly")
     .upsert(upserts, { onConflict: "house_id,ky,room" });
   if (error) return { ok: false, error: error.message };
-  const next = nextKy(ky);
   for (const u of upserts) {
     if (u.new_index == null || u.close_date == null) continue;
+    const next = nextMap.get(u.room);
+    if (!next) continue;
+    const oldNew = existMap.get(u.room)?.new_index ?? null;
+    const seedIsAuto =
+      next.old_index == null ||           // chưa có -> điền tự động
+      next.old_index === oldNew ||        // seed cũ từ lần đóng trước -> cập nhật theo số mới
+      next.old_index === u.new_index;     // đã đúng -> bỏ qua (không cập nhật lại)
+    if (!seedIsAuto) continue;            // user đã sửa tay tháng sau -> không đè
     await sb
       .from("nhatro_monthly")
       .update({ old_index: u.new_index, old_date: u.close_date })
       .eq("house_id", house.id)
-      .eq("ky", next)
+      .eq("ky", nk)
       .eq("room", u.room);
   }
 
@@ -701,6 +713,36 @@ export async function upsertRooms(rooms: Room[]) {
   return { ok: true };
 }
 
+export async function deleteRoom(room: string): Promise<{ ok: boolean; error?: string }> {
+  const house = await getActiveHouse();
+  const { data: r } = await sb
+    .from("nhatro_rooms")
+    .select("*")
+    .eq("house_id", house.id)
+    .eq("room", room)
+    .maybeSingle();
+  if (!r) return { ok: true };
+  if ((Number(r.occupancy) || 0) > 0) {
+    return { ok: false, error: `Phòng ${room} đang có người ở (${r.occupancy} người), không xoá được.` };
+  }
+  const { data: paidRows } = await sb
+    .from("nhatro_monthly")
+    .select("ky")
+    .eq("house_id", house.id)
+    .eq("room", room)
+    .neq("paid", 0);
+  if ((paidRows ?? []).length > 0) {
+    return { ok: false, error: `Phòng ${room} có lịch sử thanh toán, không xoá được qua giao diện (tránh mất dữ liệu tiền).` };
+  }
+  await sb.from("nhatro_contracts").delete().eq("house_id", house.id).eq("room", room);
+  await sb.from("nhatro_monthly").delete().eq("house_id", house.id).eq("room", room);
+  const { error } = await sb.from("nhatro_rooms").delete().eq("house_id", house.id).eq("room", room);
+  if (error) return { ok: false, error: error.message };
+  await logAudit(house.id, [{ room, field: "room_deleted", old_val: "1", new_val: "" }]);
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
 const ALLOWED_CONTRACT_MIME = [
   "application/pdf",
   "image/jpeg",
@@ -885,11 +927,13 @@ const old_index = p ? (p.new_index ?? p.old_index) : null;
     await sb.from("nhatro_monthly").insert(inserts);
     houseRows = [...houseRows, ...(inserts as MonthlyRow[])];
   }
-  const synced = applyRoomSync(houseRows, houseRooms);
+  const isCur = house.cur_ky === ky;
+  const synced = applyRoomSync(houseRows, houseRooms, { historical: !isCur });
   synced.sort((a, b) => a.room.localeCompare(b.room, "en", { numeric: true }));
   const prevSynced = applyRoomSync(
     ((prevRows ?? []) as MonthlyRow[]).filter((r) => r.house_id === house.id),
-    houseRooms
+    houseRooms,
+    { historical: prevKy(ky) !== house.cur_ky }
   );
   return {
     house,
@@ -929,8 +973,8 @@ export async function listMonths() {
     const computed = computeRows(
       house,
       priceMap,
-      applyRoomSync(rows, houseRooms),
-      applyRoomSync(prevK, houseRooms)
+      applyRoomSync(rows, houseRooms, { historical: k !== house.cur_ky }),
+      applyRoomSync(prevK, houseRooms, { historical: prevKy(k) !== house.cur_ky })
     );
     out.push({
       ky: k,
@@ -999,7 +1043,7 @@ export async function dashboardData() {
       h,
       priceMapByHouse.get(h.id) ?? {},
       applyRoomSync(curRows, houseRooms),
-      applyRoomSync(prevRowsH, houseRooms)
+      applyRoomSync(prevRowsH, houseRooms, { historical: true })
     );
     const revenue = computed.reduce((a, c) => a + c.total, 0);
     const paid = computed.reduce((a, c) => a + c.paid, 0);
@@ -1014,8 +1058,8 @@ export async function dashboardData() {
       const kc = computeRows(
         h,
         priceMapByHouse.get(h.id) ?? {},
-        applyRoomSync(kr, houseRooms),
-        applyRoomSync(prevK, houseRooms)
+        applyRoomSync(kr, houseRooms, { historical: k !== h.cur_ky }),
+        applyRoomSync(prevK, houseRooms, { historical: prevKy(k) !== h.cur_ky })
       );
       cumRevenue += kc.reduce((a, c) => a + c.total, 0);
       cumPaid += kc.reduce((a, c) => a + c.paid, 0);
@@ -1306,11 +1350,15 @@ export async function confirmPayment(ky: string, room: string, amount?: number) 
   const newPaid = oldPaid + receive;
   const newRemain = Math.max(0, c.total - newPaid);
 
-  const { error: updateErr } = await sb
+  const res = (await sb
     .from("nhatro_monthly")
     .update({ paid: newPaid })
-    .eq("id", row.id);
-  if (updateErr) return { ok: false, error: updateErr.message };
+    .eq("id", row.id)
+    .eq("paid", oldPaid)) as { data: unknown[] | null; error: { message: string } | null };
+  if (res.error) return { ok: false, error: res.error.message };
+  if (!res.data || res.data.length === 0) {
+    return { ok: false, error: "Phòng này vừa được xác nhận tiền ở nơi khác. Tải lại trang rồi thử lại." };
+  }
 
   await logAudit(house.id, [{ ky, room, field: "paid", old_val: String(oldPaid), new_val: String(newPaid) }]);
 
