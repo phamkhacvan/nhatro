@@ -385,7 +385,7 @@ export default function RoomsManager({
                 <span className="whitespace-nowrap text-xs font-medium text-slate-500 dark:text-slate-400">
                   Hợp đồng:
                 </span>
-                <span className="text-xs text-slate-400">Lưu phòng trước để tải hợp đồng.</span>
+                <span className="text-xs text-slate-400">Lưu phòng trước để upload hợp đồng.</span>
               </div>
             )}
           </div>

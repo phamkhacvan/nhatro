@@ -58,7 +58,7 @@ export default function ContractControl({
           showToast("error", res.error || "Tải lên thất bại.");
           return;
         }
-        showToast("success", "Đã tải hợp đồng lên");
+        showToast("success", "Đã upload hợp đồng");
         setMeta({ file_name: file.name, mime: file.type, size: file.size });
         router.refresh();
       })
@@ -132,7 +132,7 @@ export default function ContractControl({
             disabled={saving}
             className="rounded-lg border border-dashed border-blue-300 px-2.5 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50 dark:border-indigo-500/50 dark:text-indigo-300 dark:hover:bg-indigo-500/10"
           >
-            {saving ? "Đang tải..." : "＋ Tải hợp đồng"}
+            {saving ? "Đang tải..." : "＋ Upload hợp đồng"}
           </button>
           <span className="text-xs text-slate-400">PDF/Word/JPG/PNG · tối đa 4MB</span>
         </>
