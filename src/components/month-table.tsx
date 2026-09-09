@@ -587,11 +587,6 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                   </td>
                   <td className={moneyCls + " font-bold text-slate-900 dark:text-slate-100"}>
                     {fmt(c.total)}
-                    {c.nextBill > 0 && (
-                      <div className="text-xs font-normal text-slate-400">
-                        → thu tháng {nextM}: {fmt(c.nextBill)}
-                      </div>
-                    )}
                   </td>
                   <td className={cellCls}>
                     <input
@@ -828,9 +823,6 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                 <span>Tổng</span>
                 <span>{fmt(c.total)}</span>
               </div>
-              {c.nextBill > 0 && (
-                <div className="text-xs text-slate-400">→ thu tháng {nextM}: {fmt(c.nextBill)}</div>
-              )}
               <div className={"flex justify-between font-bold " + (c.remain > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400")}>
                 <span>Còn lại</span>
                 <span>{fmt(c.remain)}</span>
