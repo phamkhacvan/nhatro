@@ -604,9 +604,10 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                   <td className={cellCls + " sticky right-0 z-10 bg-inherit text-center"}>
                     {c.remain > 0 ? (
                       <a
-                        href={`/phieu/${encodeURIComponent(ky)}/${c.room}`}
+                        href={`/phieu/${encodeURIComponent(ky)}/${encodeURIComponent(c.room)}`}
                         className="inline-block rounded-md bg-slate-100 px-2.5 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-slate-200 transition hover:bg-indigo-50 hover:ring-indigo-200 dark:bg-slate-800 dark:text-indigo-400 dark:ring-slate-700 dark:hover:bg-indigo-500/10 dark:hover:ring-indigo-500/40"
                         target="_blank"
+                        rel="noopener noreferrer"
                       >
                         🖨 In
                       </a>
@@ -663,8 +664,9 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
               <Badge c={c} />
               {c.remain > 0 ? (
                 <a
-                  href={`/phieu/${encodeURIComponent(ky)}/${c.room}`}
+                  href={`/phieu/${encodeURIComponent(ky)}/${encodeURIComponent(c.room)}`}
                   target="_blank"
+                  rel="noopener noreferrer"
                   className="ml-auto rounded-md bg-slate-100 px-2.5 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-slate-200 transition hover:bg-indigo-50 hover:ring-indigo-200 dark:bg-slate-800 dark:text-indigo-400 dark:ring-slate-700"
                 >
                   🖨 In phiếu

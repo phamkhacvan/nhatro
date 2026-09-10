@@ -15,6 +15,13 @@ export default function LoginForm() {
   const sp = useSearchParams();
   const router = useRouter();
 
+  function safeNext(): string {
+    const next = sp.get("next");
+    if (!next) return "/";
+    if (next.startsWith("//") || next.startsWith("/\\") || !next.startsWith("/")) return "/";
+    return next;
+  }
+
   function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -22,7 +29,7 @@ export default function LoginForm() {
       start(async () => {
         const res = await login(email, pass);
         if (res.ok) {
-          router.push(sp.get("next") || "/");
+          router.push(safeNext());
         } else {
           setError(res.error || "Lỗi đăng nhập.");
         }

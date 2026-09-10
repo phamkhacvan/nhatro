@@ -31,11 +31,11 @@ export async function GET(req: NextRequest) {
   const acc = (p.get("acc") || "").trim().slice(0, 20);
   if (
     !/^[\p{L}\p{M}\p{N}.\-_/\x20]{1,40}$/u.test(ref) ||
+    !/^\d{6}$/.test(bank) ||
+    !/^\d{6,20}$/.test(acc) ||
     !Number.isFinite(amount) ||
     amount < 0 ||
-    amount > 500000000 ||
-    !bank ||
-    !acc
+    amount > 500000000
   ) {
     return new Response("invalid qr params", { status: 400 });
   }
@@ -55,6 +55,7 @@ export async function GET(req: NextRequest) {
   return new Response(body, {
     headers: {
       "Content-Type": "image/png",
+      "X-Content-Type-Options": "nosniff",
       "Cache-Control": "public, max-age=86400, s-maxage=86400, stale-while-revalidate=86400",
     },
   });

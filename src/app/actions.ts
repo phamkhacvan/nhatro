@@ -8,14 +8,15 @@ import { UAParser } from "ua-parser-js";
 import { sb } from "@/lib/supabase";
 import { STATIC_BANKS, Bank } from "@/lib/banks";
 import { SESSION_COOKIE, signSession } from "@/lib/auth";
-import { getCurrentUser, hashPassword, verifyPassword, SessionUser } from "@/lib/auth-server";
+import { getCurrentUser, sessionData, hashPassword, verifyPassword, SessionUser } from "@/lib/auth-server";
 import { House, MonthlyRow, Room, ComputedRow, ContractMeta } from "@/lib/types";
 import { prevKy, nextKy, computeRows, pricesToMap, applyRoomSync, displayKy, fmt, computeRow, vietQrLocalUrl, fmtDateVi, utilNote } from "@/lib/calc";
 
 async function logAudit(houseId: number, entries: { ky?: string; room?: string; field: string; old_val: string; new_val: string }[]) {
   const rows = entries.filter((e) => e.old_val !== e.new_val).map((e) => ({ house_id: houseId, ...e }));
   if (rows.length === 0) return;
-  await sb.from("nhatro_audit_log").insert(rows);
+  const { error } = await sb.from("nhatro_audit_log").insert(rows);
+  if (error?.message) console.error("audit-insert:", error.message);
 }
 
 const NOTIFY_EMAIL = process.env.ADMIN_NOTIFY_EMAIL || "info@legaleader.com";
@@ -137,7 +138,7 @@ export async function login(email: string, password: string): Promise<{ ok: bool
   const blocked = attempts >= 5 ? new Date(now + winMs).toISOString() : null;
   await sb
     .from("nhatro_login_attempts")
-    .upsert({ ip, attempts, window_start: windowStart.toISOString(), blocked_until: blocked });
+    .upsert({ ip, attempts, window_start: windowStart.toISOString(), blocked_until: blocked }, { onConflict: "ip" });
   return { ok: false, error: "Email hoặc mật khẩu không đúng." };
 }
 
@@ -182,7 +183,10 @@ export async function register(input: { name: string; email: string; password: s
     inserted = await insertUser(false);
   }
   const error = inserted.error;
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    console.error("register-fail:", error.message);
+    return { ok: false, error: "Đăng ký thất bại. Thử lại." };
+  }
   const uid = (inserted.data as { id: number }).id;
 
   if (isAdmin) {
@@ -204,6 +208,15 @@ export async function register(input: { name: string; email: string; password: s
 }
 
 export async function logout() {
+  // Thu hồi toàn bộ session (kể cả token bị đánh cắp) bằng cách tăng token_version.
+  try {
+    const sess = await sessionData();
+    if (sess) {
+      await sb.from("nhatro_users").update({ token_version: sess.tv + 1 }).eq("id", sess.id);
+    }
+  } catch {
+    /* DB lỗi — vẫn xoá cookie */
+  }
   const store = await cookies();
   store.delete(SESSION_COOKIE);
   revalidatePath("/", "layout");
@@ -382,7 +395,7 @@ async function ensureMonth(ky: string, houseId: number): Promise<void> {
     });
   }
   if (rows.length > 0) {
-    await sb.from("nhatro_monthly").insert(rows);
+    await sb.from("nhatro_monthly").upsert(rows, { onConflict: "house_id,ky,room" });
   }
 }
 
@@ -423,9 +436,23 @@ export async function saveMonth(ky: string, rows: MonthlyRow[]) {
       nights: Number(r.nights) || 0,
       violations: Number(r.violations) || 0,
       guest: Number(r.guest) ? 1 : 0,
-      paid: Number(r.paid) || 0,
     };
   });
+
+  // paid được ghi RIÊNG bằng update có điều kiện (CAS) để không đè lên confirmPayment
+  // đang chạy ở tab/thiết bị khác — tránh mất số tiền đã thu. Chỉ ghi nếu tab này thực sự sửa.
+  for (const r of rows) {
+    if (!Number.isFinite(Number(r.nights)) || Number(r.nights) < 0) return { ok: false, error: `Phòng ${r.room}: số đêm không thể âm.` };
+    if (!Number.isFinite(Number(r.violations)) || Number(r.violations) < 0) return { ok: false, error: `Phòng ${r.room}: số vi phạm không thể âm.` };
+    if (!Number.isFinite(Number(r.paid)) || Number(r.paid) < 0) return { ok: false, error: `Phòng ${r.room}: số tiền đã đóng không thể âm.` };
+  }
+  const paidIntents: { room: string; paid: number; old: number }[] = [];
+  for (const r of rows) {
+    const old = existMap.get(r.room);
+    const oldPaid = old ? Number(old.paid) || 0 : 0;
+    const wantPaid = Number(r.paid) || 0;
+    if (wantPaid !== oldPaid) paidIntents.push({ room: r.room, paid: wantPaid, old: oldPaid });
+  }
 
   const fieldsToTrack: (keyof MonthlyRow)[] = ["old_index", "old_date", "new_index", "close_date", "move_in", "move_out", "nights", "violations", "paid"];
   const auditEntries: { ky?: string; room: string; field: string; old_val: string; new_val: string }[] = [];
@@ -434,7 +461,9 @@ export async function saveMonth(ky: string, rows: MonthlyRow[]) {
     if (old) {
       for (const f of fieldsToTrack) {
         const ov = String((old as Record<string, unknown>)[f] ?? "");
-        const nv = String((u as Record<string, unknown>)[f] ?? "");
+        const nv = f === "paid"
+          ? String(paidIntents.find((p) => p.room === u.room)?.paid ?? (Number(old.paid) || 0))
+          : String((u as Record<string, unknown>)[f] ?? "");
         if (ov !== nv) auditEntries.push({ ky, room: u.room, field: f, old_val: ov, new_val: nv });
       }
     }
@@ -443,7 +472,27 @@ export async function saveMonth(ky: string, rows: MonthlyRow[]) {
   const { error } = await sb
     .from("nhatro_monthly")
     .upsert(upserts, { onConflict: "house_id,ky,room" });
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    console.error("saveMonth-upsert:", error.message);
+    return { ok: false, error: "Lưu thất bại. Thử lại." };
+  }
+  for (const it of paidIntents) {
+    const res = (await sb
+      .from("nhatro_monthly")
+      .update({ paid: it.paid })
+      .eq("house_id", house.id)
+      .eq("ky", ky)
+      .eq("room", it.room)
+      .eq("paid", it.old)
+      .select("paid")) as { data: unknown[] | null; error: { message: string } | null };
+    if (res.error) {
+      console.error("saveMonth-paid:", res.error.message);
+      return { ok: false, error: "Lưu thất bại. Thử lại." };
+    }
+    if (!res.data || res.data.length === 0) {
+      return { ok: false, error: `Phòng ${it.room}: số tiền đã đóng vừa thay đổi ở chỗ khác. Tải lại trang để tránh ghi đè.` };
+    }
+  }
   for (const u of upserts) {
     if (u.new_index == null || u.close_date == null) continue;
     const next = nextMap.get(u.room);
@@ -511,7 +560,10 @@ export async function updateSettings(data: Partial<House> & Record<string, unkno
   const house = await getActiveHouse();
   const { data: oldHouse } = await sb.from("nhatro_houses").select("bank_code,bank_account,bank_name").eq("id", house.id).single();
   const { error } = await sb.from("nhatro_houses").update(update).eq("id", house.id);
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    console.error("updateSettings:", error.message);
+    return err("Lưu cài đặt thất bại. Thử lại.");
+  }
   const auditEntries: { room?: string; field: string; old_val: string; new_val: string }[] = [];
   for (const f of ["bank_code", "bank_account", "bank_name"] as const) {
     const ov = String(oldHouse?.[f] ?? "");
@@ -555,7 +607,10 @@ export async function upsertPrices(prices: { occupancy: number; price: number }[
         { house_id: house.id, occupancy: occ, price },
         { onConflict: "house_id,occupancy" }
       );
-    if (error) return { ok: false, error: error.message };
+    if (error) {
+      console.error("upsertPrices:", error.message);
+      return { ok: false, error: "Lưu bảng giá thất bại. Thử lại." };
+    }
   }
   if (auditEntries.length > 0) await logAudit(house.id, auditEntries);
   revalidatePath("/", "layout");
@@ -597,6 +652,16 @@ export async function upsertRooms(rooms: Room[]) {
     if (r.move_in && r.contract_end && r.contract_end < r.move_in) {
       return { ok: false, error: `Phòng ${r.room}: Ngày kết thúc HĐ phải sau ngày vào ở.` };
     }
+    const occ = Number(r.occupancy) || 0;
+    if (!Number.isInteger(occ) || occ < 0 || occ > 20) {
+      return { ok: false, error: `Phòng ${r.room}: số người phải là số nguyên từ 0 đến 20.` };
+    }
+    if (r.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(r.email).trim())) {
+      return { ok: false, error: `Phòng ${r.room}: email không hợp lệ.` };
+    }
+    if (!Number.isFinite(Number(r.deposit)) || Number(r.deposit) < 0) {
+      return { ok: false, error: `Phòng ${r.room}: tiền cọc không thể âm.` };
+    }
   }
   const { error: roomErr } = await sb.from("nhatro_rooms").upsert(
     rooms.map((r) => ({
@@ -620,7 +685,10 @@ export async function upsertRooms(rooms: Room[]) {
     })),
     { onConflict: "house_id,room" }
   );
-  if (roomErr) return { ok: false, error: roomErr.message };
+  if (roomErr) {
+    console.error("upsertRooms:", roomErr.message);
+    return { ok: false, error: "Lưu phòng thất bại. Thử lại." };
+  }
 
   const { data: monthRows } = await sb
     .from("nhatro_monthly")
@@ -757,7 +825,10 @@ export async function deleteRoom(room: string): Promise<{ ok: boolean; error?: s
   await sb.from("nhatro_contracts").delete().eq("house_id", house.id).eq("room", room);
   await sb.from("nhatro_monthly").delete().eq("house_id", house.id).eq("room", room);
   const { error } = await sb.from("nhatro_rooms").delete().eq("house_id", house.id).eq("room", room);
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    console.error("deleteRoom:", error.message);
+    return { ok: false, error: "Xoá phòng thất bại. Thử lại." };
+  }
   await logAudit(house.id, [{ room, field: "room_deleted", old_val: "1", new_val: "" }]);
   revalidatePath("/", "layout");
   return { ok: true };
@@ -806,7 +877,10 @@ export async function uploadContract(room: string, formData: FormData): Promise<
     { house_id: house.id, room, file_name: file.name, mime: file.type, size: file.size, data },
     { onConflict: "house_id,room" }
   );
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    console.error("uploadContract:", error.message);
+    return { ok: false, error: "Tải hợp đồng thất bại. Thử lại." };
+  }
   await logAudit(house.id, [{ room, field: "contract", old_val: oldDoc?.file_name ?? "", new_val: file.name }]);
   revalidatePath("/", "layout");
   return { ok: true };
@@ -823,10 +897,11 @@ export async function getContractFile(
       .eq("house_id", house.id)
       .eq("room", room)
       .maybeSingle();
-    if (error || !data) return { ok: false, error: error?.message || "Không có hợp đồng." };
+    if (error || !data) return { ok: false, error: "Không có hợp đồng." };
     return { ok: true, file_name: data.file_name, mime: data.mime, base64: data.data };
   } catch (err) {
-    return { ok: false, error: `contract-error: ${String((err as Error)?.message ?? err)}` };
+    console.error("getContractFile:", (err as Error)?.message ?? err);
+    return { ok: false, error: "Lỗi khi lấy hợp đồng. Thử lại." };
   }
 }
 
@@ -840,7 +915,10 @@ export async function deleteContract(room: string): Promise<{ ok: boolean; error
     .maybeSingle();
   if (oldDoc) {
     const { error } = await sb.from("nhatro_contracts").delete().eq("house_id", house.id).eq("room", room);
-    if (error) return { ok: false, error: error.message };
+    if (error) {
+      console.error("deleteContract:", error.message);
+      return { ok: false, error: "Xoá hợp đồng thất bại. Thử lại." };
+    }
     await logAudit(house.id, [{ room, field: "contract", old_val: oldDoc.file_name, new_val: "" }]);
     revalidatePath("/", "layout");
     return { ok: true };
@@ -944,7 +1022,7 @@ const old_index = p ? (p.new_index ?? p.old_index) : null;
         paid: 0,
       };
     });
-    await sb.from("nhatro_monthly").insert(inserts);
+    await sb.from("nhatro_monthly").upsert(inserts, { onConflict: "house_id,ky,room" });
     houseRows = [...houseRows, ...(inserts as MonthlyRow[])];
   }
   const isCur = house.cur_ky === ky;
@@ -1126,9 +1204,11 @@ export async function settingsData() {
       : null,
     users: [] as UserAccount[],
   };
-  if (hid == null) return empty;
-  const [{ data: house }, { data: prices }, { data: rooms }, { data: contracts }] = await Promise.all([
-    sb.from("nhatro_houses").select("*").eq("id", hid).eq("owner_id", user!.id).maybeSingle(),
+  // Kiểm tra quyền sở hữu TRƯỚC khi đọc dữ liệu của nhà — nếu không thuộc về user thì không trả gì.
+  if (hid == null || !user) return empty;
+  const { data: house } = await sb.from("nhatro_houses").select("*").eq("id", hid).eq("owner_id", user.id).maybeSingle();
+  if (!house) return empty;
+  const [{ data: prices }, { data: rooms }, { data: contracts }] = await Promise.all([
     sb.from("nhatro_prices").select("*").eq("house_id", hid).order("occupancy"),
     sb.from("nhatro_rooms").select("*").eq("house_id", hid).order("room"),
     sb.from("nhatro_contracts").select("room, file_name, mime, size").eq("house_id", hid),
@@ -1139,7 +1219,7 @@ export async function settingsData() {
     contractMap[r.room as string] = { file_name: r.file_name as string, mime: r.mime as string, size: Number(r.size) };
   }
   return {
-    house: (house ?? null) as House | null,
+    house: house as House,
     prices: (prices ?? []) as { occupancy: number; price: number }[],
     rooms: (rooms ?? []) as Room[],
     contracts: contractMap,
@@ -1173,14 +1253,18 @@ export async function createHouse(prev: { ok: boolean; error?: string } | null, 
     .insert({ name, address: address || null, cur_ky: curKy, owner_id: user.id })
     .select()
     .single();
-  if (error || !data) return { ok: false, error: error?.message || "Không tạo được nhà trọ. Thử lại." };
+  if (error || !data) {
+    console.error("createHouse:", error?.message);
+    return { ok: false, error: "Không tạo được nhà trọ. Thử lại." };
+  }
   const { error: priceErr } = await sb.from("nhatro_prices").insert([
     { house_id: data.id, occupancy: 1, price: 2500000 },
     { house_id: data.id, occupancy: 2, price: 3000000 },
   ]);
   if (priceErr) {
     await sb.from("nhatro_houses").delete().eq("id", data.id);
-    return { ok: false, error: priceErr.message };
+    console.error("createHouse-prices:", priceErr.message);
+    return { ok: false, error: "Không tạo được nhà trọ. Thử lại." };
   }
   await sb.from("nhatro_users").update({ active_house_id: data.id }).eq("id", user.id);
   revalidatePath("/", "layout");
@@ -1192,7 +1276,8 @@ function esc(s: unknown): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 async function appBaseUrl(): Promise<string> {
@@ -1358,7 +1443,10 @@ export async function sendPhieuEmail(ky: string, room: string) {
     }),
   });
   const json = (await res.json().catch(() => ({}))) as { message?: string };
-  if (!res.ok) return { ok: false, error: json?.message || `Lỗi gửi email (HTTP ${res.status})` };
+  if (!res.ok) {
+    console.error("sendPhieuEmail:", res.status, (json as { message?: string }).message);
+    return { ok: false, error: "Không gửi được email. Thử lại sau." };
+  }
   return { ok: true };
 }
 
@@ -1374,7 +1462,9 @@ export async function confirmPayment(ky: string, room: string, amount?: number) 
 
   const synced = applyRoomSync([row as MonthlyRow], (roomRow ? [roomRow] : []) as Room[])[0] as MonthlyRow;
   const c = computeRow(house, pricesToMap(prices ?? []), synced, (prevRow ?? null) as MonthlyRow | null);
-  const receive = Math.min(amount ?? c.remain, c.remain);
+  const receive0 = amount ?? c.remain;
+  if (!Number.isFinite(receive0) || receive0 < 0) return { ok: false, error: "Số tiền nhận không hợp lệ." };
+  const receive = Math.min(receive0, c.remain);
   if (c.remain <= 0) return { ok: false, error: "Không còn số tiền cần xác nhận." };
   if (receive <= 0) return { ok: false, error: "Số tiền nhận phải lớn hơn 0." };
 
@@ -1386,8 +1476,12 @@ export async function confirmPayment(ky: string, room: string, amount?: number) 
     .from("nhatro_monthly")
     .update({ paid: newPaid })
     .eq("id", row.id)
-    .eq("paid", oldPaid)) as { data: unknown[] | null; error: { message: string } | null };
-  if (res.error) return { ok: false, error: res.error.message };
+    .eq("paid", oldPaid)
+    .select("paid")) as { data: unknown[] | null; error: { message: string } | null };
+  if (res.error) {
+    console.error("confirmPayment:", res.error.message);
+    return { ok: false, error: "Xác nhận thất bại. Thử lại." };
+  }
   if (!res.data || res.data.length === 0) {
     return { ok: false, error: "Phòng này vừa được xác nhận tiền ở nơi khác. Tải lại trang rồi thử lại." };
   }
@@ -1419,6 +1513,8 @@ export async function confirmPayment(ky: string, room: string, amount?: number) 
 }
 
 export async function getAuditLogs(limit = 50, offset = 0, kyFilter?: string) {
+  const l = Math.max(1, Math.min(200, Math.floor(Number(limit) || 50)));
+  const o = Math.max(0, Math.floor(Number(offset) || 0));
   const house = await getActiveHouse();
   let query = sb
     .from("nhatro_audit_log")
@@ -1432,7 +1528,7 @@ export async function getAuditLogs(limit = 50, offset = 0, kyFilter?: string) {
     .eq("house_id", house.id);
   if (kyFilter) countQuery = countQuery.eq("ky", kyFilter);
   const [{ data }, { count }] = await Promise.all([
-    query.range(offset, offset + limit - 1),
+    query.range(o, o + l - 1),
     countQuery,
   ]);
   return { logs: data ?? [], total: count ?? 0 };
@@ -1494,9 +1590,13 @@ export async function changeOwnPassword(current: string, next: string): Promise<
 export async function adminResetPassword(userId: number, next: string): Promise<{ ok: boolean; error?: string }> {
   const me = await getCurrentUser();
   if (!me?.is_admin) return { ok: false, error: "Không có quyền." };
+  if (userId === me.id) return { ok: false, error: "Không thể tự đặt lại mật khẩu của mình ở đây — hãy dùng chức năng Đổi mật khẩu." };
   if (next.length < 6) return { ok: false, error: "Mật khẩu mới phải có ít nhất 6 ký tự." };
   const { data: rec } = await sb.from("nhatro_users").select("token_version").eq("id", userId).single();
   const tv = Number((rec as { token_version?: number }).token_version ?? 0) + 1;
   await sb.from("nhatro_users").update({ password_hash: hashPassword(next), token_version: tv }).eq("id", userId);
+  if (me.active_house_id != null) {
+    await logAudit(me.active_house_id, [{ room: String(userId), field: "admin_password_reset", old_val: "", new_val: me.email }]);
+  }
   return { ok: true };
 }

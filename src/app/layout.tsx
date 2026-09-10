@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -18,8 +19,6 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
-  const themeScript =
-    "try{var t=localStorage.getItem('theme');var h=new Date().getHours();var night=h>=18||h<5;if(t==='dark'||(t===null&&night))document.documentElement.classList.add('dark')}catch(e){}";
   return (
     <html
       lang="vi"
@@ -27,7 +26,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       suppressHydrationWarning
     >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        <Script src="/theme-init.js" strategy="beforeInteractive" />
       </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>

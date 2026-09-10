@@ -1,0 +1,1 @@
+try{var t=localStorage.getItem('theme');var h=new Date().getHours();var night=h>=18||h<5;if(t==='dark'||(t===null&&night))document.documentElement.classList.add('dark')}catch{}

@@ -1,15 +1,33 @@
 import type { NextRequest } from "next/server";
-import { cookies } from "next/headers";
-import { verifySession, SESSION_COOKIE } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/auth-server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+// Rate limit in-memory (đủ cho preview cá nhân; chặn spam URL).
+const RATE = { limit: 30, windowMs: 60_000 };
+const ipHits = new Map<string, { count: number; resetAt: number }>();
+
+function limited(ip: string): boolean {
+  const now = Date.now();
+  const rec = ipHits.get(ip);
+  if (!rec || rec.resetAt < now) {
+    ipHits.set(ip, { count: 1, resetAt: now + RATE.windowMs });
+    return false;
+  }
+  rec.count += 1;
+  if (rec.count > RATE.limit) return true;
+  ipHits.set(ip, rec);
+  return false;
+}
+
 export async function GET(req: NextRequest) {
-  const store = await cookies();
-  const token = store.get(SESSION_COOKIE)?.value;
-  if (!token || !(await verifySession(token))) {
+  const user = await getCurrentUser();
+  if (!user) {
     return new Response("unauthorized", { status: 401 });
+  }
+  if (limited(req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown")) {
+    return new Response("too many requests", { status: 429 });
   }
 
   const p = req.nextUrl.searchParams;
@@ -28,6 +46,7 @@ export async function GET(req: NextRequest) {
   return new Response(body, {
     headers: {
       "Content-Type": "image/png",
+      "X-Content-Type-Options": "nosniff",
       "Cache-Control": "private, max-age=3600",
     },
   });

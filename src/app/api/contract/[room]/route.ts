@@ -50,6 +50,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ room
     },
   });
   } catch (err) {
-    return new Response(`contract-error: ${String((err as Error)?.message ?? err)}`, { status: 500 });
+    console.error("contract-route:", (err as Error)?.message ?? err);
+    return new Response("internal error", { status: 500 });
   }
 }

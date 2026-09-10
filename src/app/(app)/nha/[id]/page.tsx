@@ -26,27 +26,21 @@ export default async function HousePage({ params }: { params: Promise<{ id: stri
     const initialMonth = await dataForKy(house.cur_ky as string);
     render = { key: hid, house: house as House, initialMonth };
   } catch (err) {
-    const msg = String((err as Error)?.message ?? err);
-    const stack = (err as Error)?.stack ?? "";
-    console.error("house-page-ssr", msg, stack);
+    console.error("house-page-ssr", (err as Error)?.message ?? err);
     return (
       <div
         style={{
           margin: "40px auto",
           maxWidth: 640,
           padding: 16,
-          fontFamily: "ui-monospace, monospace",
-          fontSize: 13,
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
+          textAlign: "center",
           border: "1px solid #d33",
           borderRadius: 8,
           background: "#fff5f5",
         }}
       >
-        <p style={{ color: "#a00", fontWeight: 700 }}>&#x1F6D1; Lỗi render (SSR) &mdash; nha/{id}</p>
-        <p>{msg}</p>
-        {stack ? <pre style={{ fontSize: 12 }}>{stack}</pre> : null}
+        <p style={{ color: "#a00", fontWeight: 700 }}>&#x1F6D1; Không tải được dữ liệu nhà.</p>
+        <p style={{ marginTop: 8, fontSize: 14, color: "#555" }}>Vui lòng tải lại trang hoặc thử lại sau.</p>
       </div>
     );
   }

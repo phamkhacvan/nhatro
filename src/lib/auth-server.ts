@@ -1,7 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import { cookies } from "next/headers";
-import { randomBytes, scryptSync, timingSafeEqual, createHash } from "node:crypto";
+import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { sb } from "@/lib/supabase";
 import { verifySession, verifySessionData, SESSION_COOKIE } from "@/lib/auth";
 
@@ -56,10 +56,4 @@ export function verifyPassword(plain: string, stored: string): boolean {
   const candidate = scryptSync(plain, salt, 64);
   const storedBuf = Buffer.from(hash, "hex");
   return candidate.length === storedBuf.length && timingSafeEqual(candidate, storedBuf);
-}
-
-export function safeEqual(a: string, b: string): boolean {
-  const ha = createHash("sha256").update(a).digest();
-  const hb = createHash("sha256").update(b).digest();
-  return timingSafeEqual(ha, hb);
 }

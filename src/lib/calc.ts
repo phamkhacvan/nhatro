@@ -177,6 +177,8 @@ export function computeRow(
   const mi = row.move_in ?? null;
   const mo = row.move_out ?? null;
   const { amount: rent, note } = prorate(fullRent, row.ky, mi, mo);
+  const missingPrice = occ > 0 && (prices[occ] ?? 0) === 0;
+  const rentNote = missingPrice ? (note ? `${note} · ❗ chưa có giá ${occ} người` : `❗ chưa có giá ${occ} người`) : note;
   const pMi = prevRow?.move_in ?? null;
   const pMo = prevRow?.move_out ?? null;
   const pKy = prevRow?.ky ?? row.ky;
@@ -198,7 +200,7 @@ export function computeRow(
     ...row,
     kwh,
     rent,
-    rentNote: note,
+    rentNote,
     water,
     wifi,
     elec,

@@ -4,7 +4,7 @@ export const SESSION_COOKIE = "nhatro_session";
 
 function secretKey(): Uint8Array {
   const s = process.env.SESSION_SECRET;
-  if (!s) throw new Error("Thiếu SESSION_SECRET trong .env.local");
+  if (!s || s.length < 32) throw new Error("Thiếu SESSION_SECRET (tối thiểu 32 ký tự) trong .env.local");
   return new TextEncoder().encode(s);
 }
 
