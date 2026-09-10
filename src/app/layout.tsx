@@ -26,7 +26,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       suppressHydrationWarning
     >
       <head>
-        <Script src="/theme-init.js" strategy="beforeInteractive" />
+        <Script src="/theme-init.js?v=2" strategy="beforeInteractive" />
       </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
