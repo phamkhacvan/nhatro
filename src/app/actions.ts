@@ -292,13 +292,15 @@ function formatKyNow(): string {
   return `${y}-${m}`;
 }
 
-async function healMonthIntegrity(houseId: number, curKy: string | null): Promise<void> {
+async function healMonthIntegrity(houseId: number, curKy: string | null): Promise<boolean> {
   const real = formatKyNow();
   const prev = prevKy(real);
+  let changed = false;
   if (!curKy || curKy > real) {
     await sb.from("nhatro_houses").update({ cur_ky: real }).eq("id", houseId);
+    changed = true;
   }
-  if (!prev) return;
+  if (!prev) return changed;
   const [{ data: pRows }, { data: cRows }] = await Promise.all([
     sb.from("nhatro_monthly").select("*").eq("house_id", houseId).eq("ky", prev),
     sb.from("nhatro_monthly").select("*").eq("house_id", houseId).eq("ky", real),
@@ -316,6 +318,7 @@ async function healMonthIntegrity(houseId: number, curKy: string | null): Promis
     if (p.new_index != null || p.close_date != null) continue;
     if (cNew == null || cNew === 0 || cOld == null || !c.close_date) continue;
     const chot = String(cNew);
+    changed = true;
     await Promise.all([
       sb.from("nhatro_monthly")
         .update({ old_index: String(cOld), new_index: chot, close_date: c.close_date, move_in: p.move_in })
@@ -325,6 +328,7 @@ async function healMonthIntegrity(houseId: number, curKy: string | null): Promis
         .eq("house_id", houseId).eq("ky", real).eq("room", p.room),
     ]);
   }
+  return changed;
 }
 
 // Danh sách nhà thuộc về user hiện tại
@@ -963,19 +967,20 @@ export async function dataForKy(ky: string) {
     };
   }
   const realNow = formatKyNow();
-  if (house && (ky === realNow || ky === prevKy(realNow))) {
-    await healMonthIntegrity(house.id, house.cur_ky ?? null);
-  }
+  const needHeal = !!house && (ky === realNow || ky === prevKy(realNow));
+  const healP = needHeal ? healMonthIntegrity(house.id, house.cur_ky ?? null) : Promise.resolve(false);
   const [
     { data: rooms },
     { data: prices },
     { data: rows },
     { data: prevRows },
+    healed,
   ] = await Promise.all([
     sb.from("nhatro_rooms").select("*").eq("house_id", house.id).eq("active", true).order("room"),
     sb.from("nhatro_prices").select("*").eq("house_id", house.id).order("occupancy"),
     sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", ky).order("room"),
     sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", prev),
+    healP,
   ]);
   if (!house)
     return {
@@ -988,9 +993,19 @@ export async function dataForKy(ky: string) {
   const houseRooms = (rooms ?? []) as Room[];
   const housePrices = (prices ?? []) as { occupancy: number; price: number }[];
   let houseRows = (rows ?? []) as MonthlyRow[];
+  let housePrevRows = (prevRows ?? []) as MonthlyRow[];
+  // Nếu heal vừa tự sửa dữ liệu (hiếm) → đọc lại 2 tháng bị ảnh hưởng cho chính xác
+  if (healed) {
+    const [{ data: r2 }, { data: p2 }] = await Promise.all([
+      sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", ky).order("room"),
+      sb.from("nhatro_monthly").select("*").eq("house_id", house.id).eq("ky", prev).order("room"),
+    ]);
+    if (r2) houseRows = r2 as MonthlyRow[];
+    if (p2) housePrevRows = p2 as MonthlyRow[];
+  }
   const have = new Set(houseRows.map((r) => r.room));
   const prevMap = new Map<string, MonthlyRow>(
-    (prevRows ?? []).filter((r: MonthlyRow) => r.house_id === house.id).map((r) => [r.room, r])
+    (housePrevRows ?? []).filter((r: MonthlyRow) => r.house_id === house.id).map((r) => [r.room, r])
   );
   const minKy = houseRooms
     .map((r) => (r.move_in ? r.move_in.slice(0, 7) : null))
@@ -1029,7 +1044,7 @@ const old_index = p ? (p.new_index ?? p.old_index) : null;
   const synced = applyRoomSync(houseRows, houseRooms, { historical: !isCur });
   synced.sort((a, b) => a.room.localeCompare(b.room, "en", { numeric: true }));
   const prevSynced = applyRoomSync(
-    ((prevRows ?? []) as MonthlyRow[]).filter((r) => r.house_id === house.id),
+    (housePrevRows ?? []).filter((r: MonthlyRow) => r.house_id === house.id),
     houseRooms,
     { historical: prevKy(ky) !== house.cur_ky }
   );
