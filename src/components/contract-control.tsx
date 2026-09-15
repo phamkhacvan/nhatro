@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { uploadContract, deleteContract, getContractMeta, getContractFile } from "@/app/actions";
 import { ContractMeta } from "@/lib/types";
 import { showToast } from "@/components/toast";
+import { emitRefresh } from "@/lib/refresh";
 
 function fmtSize(n: number): string {
   if (n < 1024) return `${n}B`;
@@ -61,6 +62,7 @@ export default function ContractControl({
         showToast("success", "Đã upload hợp đồng");
         setMeta({ file_name: file.name, mime: file.type, size: file.size });
         router.refresh();
+        emitRefresh();
       })
       .catch((err) => {
         setSaving(false);
@@ -81,6 +83,7 @@ export default function ContractControl({
         showToast("success", "Đã xóa hợp đồng");
         setMeta(null);
         router.refresh();
+        emitRefresh();
       })
       .catch((err) => {
         setSaving(false);

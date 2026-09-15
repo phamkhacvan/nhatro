@@ -6,6 +6,7 @@ import { House } from "@/lib/types";
 import { dataForKy, settingsData, getAuditLogs } from "@/app/actions";
 import { pricesToMap } from "@/lib/calc";
 import { setDirty } from "@/lib/dirty";
+import { subscribeRefresh } from "@/lib/refresh";
 import MonthTable from "@/components/month-table";
 import CaiDatTabs from "@/components/cai-dat-tabs";
 
@@ -70,6 +71,12 @@ function BangTinhTab({ ky, onOpen, initial }: { ky: string; onOpen: (k: string) 
     dataForKy(ky).then((d) => setData(d));
   }
 
+  const reloadRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    reloadRef.current = reload;
+  });
+  useEffect(() => subscribeRefresh(() => reloadRef.current()), []);
+
   if (!data?.house) return <TableSkeleton />;
   return (
     <MonthTable
@@ -82,7 +89,6 @@ function BangTinhTab({ ky, onOpen, initial }: { ky: string; onOpen: (k: string) 
       prevRows={data.prevRows}
       minKy={data.minKy}
       onSelectMonth={onOpen}
-      onSaved={reload}
     />
   );
 }
@@ -208,6 +214,7 @@ export default function HouseWorkspace({
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const router = useRouter();
 
+  const settingsKyFetchedFor = useRef<"caidat" | "other">("other");
   useEffect(() => {
     if (tab === "lichsu" && auditLogs === null) {
       getAuditLogs(PAGE_SIZE, 0, auditKyFilter || undefined).then((r) => {
@@ -215,8 +222,31 @@ export default function HouseWorkspace({
         setAuditTotal(r.total);
       });
     }
-    if (tab === "caidat" && settings === null) settingsData().then(setSettings);
-  }, [tab, auditLogs, settings, auditKyFilter]);
+    if (tab === "caidat") {
+      settingsKyFetchedFor.current = "caidat";
+      settingsData().then(setSettings);
+    } else {
+      settingsKyFetchedFor.current = "other";
+    }
+  }, [tab, auditLogs, auditKyFilter]);
+
+  const tabRef = useRef(tab);
+  useEffect(() => {
+    tabRef.current = tab;
+  }, [tab]);
+  useEffect(
+    () =>
+      subscribeRefresh(() => {
+        if (tabRef.current === "caidat") settingsData().then(setSettings);
+        if (tabRef.current === "lichsu") {
+          getAuditLogs(PAGE_SIZE, 0, auditKyFilter).then((r) => {
+            setAuditLogs(r.logs);
+            setAuditTotal(r.total);
+          });
+        }
+      }),
+    [auditKyFilter]
+  );
 
   function goToAuditPage(page: number) {
     if (auditLoading) return;

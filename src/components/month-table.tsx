@@ -8,6 +8,7 @@ import { showToast } from "@/components/toast";
 import RoomInfoModal from "@/components/room-info-modal";
 import MonthSelector from "@/components/month-selector";
 import { setDirty, useDirty } from "@/lib/dirty";
+import { emitRefresh } from "@/lib/refresh";
 
 type Draft = {
   room: string;
@@ -25,6 +26,13 @@ type Draft = {
   guest: boolean;
   washing_machine: boolean;
   paid: string;
+  exempt_elec: boolean;
+  exempt_wifi: boolean;
+  exempt_water: boolean;
+  exempt_penalty: boolean;
+  exempt_from: string;
+  exempt_until: string;
+  room_price: string;
 };
 
 function toDraft(r: MonthlyRow): Draft {
@@ -44,6 +52,13 @@ function toDraft(r: MonthlyRow): Draft {
     guest: Number(r.guest) > 0,
     washing_machine: Boolean(r.washing_machine),
     paid: r.paid == null ? "" : formatThousand(String(r.paid)),
+    exempt_elec: Boolean(r.exempt_elec),
+    exempt_wifi: Boolean(r.exempt_wifi),
+    exempt_water: Boolean(r.exempt_water),
+    exempt_penalty: Boolean(r.exempt_penalty),
+    exempt_from: r.exempt_from ?? "",
+    exempt_until: r.exempt_until ?? "",
+    room_price: r.room_price == null ? "" : formatThousand(String(r.room_price)),
   };
 }
 
@@ -65,6 +80,13 @@ function toRow(ky: string, d: Draft): MonthlyRow {
     guest: d.guest ? 1 : 0,
     washing_machine: d.washing_machine,
     paid: parseThousand(d.paid),
+    exempt_elec: d.exempt_elec,
+    exempt_wifi: d.exempt_wifi,
+    exempt_water: d.exempt_water,
+    exempt_penalty: d.exempt_penalty,
+    exempt_from: d.exempt_from || null,
+    exempt_until: d.exempt_until || null,
+    room_price: d.room_price === "" ? null : parseThousand(d.room_price),
   };
 }
 
@@ -84,12 +106,16 @@ type Props = {
   prevRows?: MonthlyRow[];
   minKy?: string | null;
   onSelectMonth?: (ky: string) => void;
-  onSaved?: () => void;
 };
 
-export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRows = [], minKy = null, onSelectMonth, onSaved }: Props) {
+export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRows = [], minKy = null, onSelectMonth }: Props) {
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(rows.map(toDraft));
+  const [prevRowsState, setPrevRowsState] = useState(rows);
+  if (prevRowsState !== rows) {
+    setPrevRowsState(rows);
+    setEditing(rows.map(toDraft));
+  }
   const [pen, setPen] = useState<{ i: number; nights: string; violations: string; guest: boolean } | null>(null);
   const [roomModal, setRoomModal] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -171,12 +197,12 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
     const c = computeRow(house, prices, toRow(ky, d), prevMap.get(d.room) ?? null);
     const occ = Math.max(Number(d.occupancy) || 0, d.guest ? 2 : 0);
     const waterPerHead = d.washing_machine ? 150000 : Number(house.water_rate);
+    const ex = c.exempted ?? [];
     const nextBill =
-      prorate(occ * waterPerHead, ky, d.move_in || null, d.move_out || null).amount +
-      prorate(occ * Number(house.wifi_rate), ky, d.move_in || null, d.move_out || null).amount +
-      (c.kwh != null ? c.kwh * Number(house.elec_rate) : 0) +
-      penaltyFor(Number(d.nights) || 0, Number(d.violations) || 0) +
-      (d.guest ? 500000 : 0);
+      (ex.includes("water") ? 0 : prorate(occ * waterPerHead, ky, d.move_in || null, d.move_out || null).amount) +
+      (ex.includes("wifi") ? 0 : prorate(occ * Number(house.wifi_rate), ky, d.move_in || null, d.move_out || null).amount) +
+      (ex.includes("elec") || c.kwh == null ? 0 : c.kwh * Number(house.elec_rate)) +
+      (ex.includes("penalty") ? 0 : penaltyFor(Number(d.nights) || 0, Number(d.violations) || 0) + (d.guest ? 500000 : 0));
     return { ...c, nextBill };
   });
 
@@ -292,7 +318,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
             showToast("success", "Lưu thành công");
             setDirty(false);
             resolve(true);
-            onSaved?.();
+            emitRefresh();
           }
         })
         .catch((err) => {
@@ -556,17 +582,39 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                     {fmt(c.rent)}
                     {c.rentNote && <div className="text-xs font-normal text-slate-400">{c.rentNote}</div>}
                   </td>
-                  <td className={moneyCls + " dark:text-slate-300"}>{fmt(c.water)}</td>
-                  <td className={moneyCls + " dark:text-slate-300"}>{fmt(c.wifi)}</td>
-                  <td className={moneyCls + " dark:text-slate-300"}>{fmt(c.elec)}</td>
+                  <td className={moneyCls + " dark:text-slate-300"}>
+                    {fmt(c.water)}
+                    {c.exempted?.includes("water") && (
+                      <div className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">🎁 miễn phí</div>
+                    )}
+                  </td>
+                  <td className={moneyCls + " dark:text-slate-300"}>
+                    {fmt(c.wifi)}
+                    {c.exempted?.includes("wifi") && (
+                      <div className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">🎁 miễn phí</div>
+                    )}
+                  </td>
+                  <td className={moneyCls + " dark:text-slate-300"}>
+                    {fmt(c.elec)}
+                    {c.exempted?.includes("elec") && (
+                      <div className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">🎁 miễn phí</div>
+                    )}
+                  </td>
                   <td className={moneyCls}>
-                    <button
-                      onClick={() => openPen(i)}
-                      title="Nhập phụ phí (khách đêm / vi phạm)"
-                      className="font-medium text-indigo-700 underline decoration-dotted underline-offset-2 transition hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300"
-                    >
-                      {fmt(c.penalty)}
-                    </button>
+                    {c.exempted?.includes("penalty") ? (
+                      <>
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">{fmt(c.penalty)}</span>
+                        <div className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">🎁 miễn phí</div>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => openPen(i)}
+                        title="Nhập phụ phí (khách đêm / vi phạm)"
+                        className="font-medium text-indigo-700 underline decoration-dotted underline-offset-2 transition hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300"
+                      >
+                        {fmt(c.penalty)}
+                      </button>
+                    )}
                     {c.penalty > 0 && (
                       <div className="text-xs font-normal text-slate-400">
                         {c.prevNights > 0 || c.prevViolations > 0 || c.hasGuest ? (
@@ -806,19 +854,19 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                 <span>{fmt(c.rent)}</span>
               </div>
               <div className="flex justify-between text-slate-500 dark:text-slate-400">
-                <span>Nước (tháng {prevM})</span>
+                <span>Nước (tháng {prevM}){c.exempted?.includes("water") ? " · 🎁 miễn phí" : ""}</span>
                 <span>{fmt(c.water)}</span>
               </div>
               <div className="flex justify-between text-slate-500 dark:text-slate-400">
-                <span>Wifi+Rác (tháng {prevM})</span>
+                <span>Wifi+Rác (tháng {prevM}){c.exempted?.includes("wifi") ? " · 🎁 miễn phí" : ""}</span>
                 <span>{fmt(c.wifi)}</span>
               </div>
               <div className="flex justify-between text-slate-500 dark:text-slate-400">
-                <span>Điện (tháng {prevM}){c.kwh ? ` · ${c.kwh} kWh` : ""}</span>
+                <span>Điện (tháng {prevM}){c.kwh ? ` · ${c.kwh} kWh` : ""}{c.exempted?.includes("elec") ? " · 🎁 miễn phí" : ""}</span>
                 <span>{fmt(c.elec)}</span>
               </div>
               <div className="flex justify-between text-slate-500 dark:text-slate-400">
-                <span>Phụ phí (tháng {prevM})</span>
+                <span>Phụ phí (tháng {prevM}){c.exempted?.includes("penalty") ? " · 🎁 miễn phí" : ""}</span>
                 <span>{fmt(c.penalty)}</span>
               </div>
               <div className="flex justify-between font-bold text-slate-900 dark:text-slate-100">

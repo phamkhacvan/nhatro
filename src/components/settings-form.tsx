@@ -7,6 +7,7 @@ import { updateSettings, upsertPrices, getBanks } from "@/app/actions";
 import { formatThousand, parseThousand } from "@/lib/calc";
 import { showToast } from "@/components/toast";
 import { Bank } from "@/lib/banks";
+import { emitRefresh } from "@/lib/refresh";
 
 const label = "mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300";
 const input =
@@ -101,6 +102,7 @@ export default function SettingsForm({
           showToast("success", "Lưu thành công");
           setSavedSnap(sKey(s, p));
           router.refresh();
+          emitRefresh();
         }
       })
       .catch((err) => {
