@@ -46,6 +46,13 @@ export type Room = {
   active: boolean;
   initial_index?: number | null;
   washing_machine: boolean;
+  exempt_elec?: boolean;
+  exempt_wifi?: boolean;
+  exempt_water?: boolean;
+  exempt_penalty?: boolean;
+  exempt_from?: string | null;
+  exempt_until?: string | null;
+  room_price?: number | null;
 };
 
 export type ContractMeta = {
@@ -88,6 +95,14 @@ export type MonthlyRow = {
   guest: number;
   paid: number;
   washing_machine?: boolean;
+  // Trạng thái miễn phí theo thành phần (sync từ nhatro_rooms qua applyRoomSync)
+  exempt_elec?: boolean;
+  exempt_wifi?: boolean;
+  exempt_water?: boolean;
+  exempt_penalty?: boolean;
+  exempt_from?: string | null;
+  exempt_until?: string | null;
+  room_price?: number | null;
 };
 
 export type ComputedRow = MonthlyRow & {
@@ -100,6 +115,7 @@ export type ComputedRow = MonthlyRow & {
   penalty: number;
   guestFee: number;
   hasGuest: boolean;
+  exempted: ("water" | "wifi" | "elec" | "penalty")[];
   total: number;
   remain: number;
   prevOcc: number;

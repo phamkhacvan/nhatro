@@ -10,7 +10,7 @@ import { STATIC_BANKS, Bank } from "@/lib/banks";
 import { SESSION_COOKIE, signSession } from "@/lib/auth";
 import { getCurrentUser, sessionData, hashPassword, verifyPassword, SessionUser } from "@/lib/auth-server";
 import { House, MonthlyRow, Room, ComputedRow, ContractMeta } from "@/lib/types";
-import { prevKy, nextKy, computeRows, pricesToMap, applyRoomSync, displayKy, fmt, computeRow, vietQrLocalUrl, fmtDateVi, utilNote } from "@/lib/calc";
+import { prevKy, nextKy, computeRows, pricesToMap, applyRoomSync, displayKy, fmt, computeRow, vietQrLocalUrl, fmtDateVi, utilNote, exemptLabel } from "@/lib/calc";
 
 async function logAudit(houseId: number, entries: { ky?: string; room?: string; field: string; old_val: string; new_val: string }[]) {
   const rows = entries.filter((e) => e.old_val !== e.new_val).map((e) => ({ house_id: houseId, ...e }));
@@ -666,6 +666,21 @@ export async function upsertRooms(rooms: Room[]) {
     if (!Number.isFinite(Number(r.deposit)) || Number(r.deposit) < 0) {
       return { ok: false, error: `Phòng ${r.room}: tiền cọc không thể âm.` };
     }
+    if (r.room_price != null && Number(r.room_price) !== 0 && (Number(r.room_price) < 0 || !Number.isFinite(Number(r.room_price)))) {
+      return { ok: false, error: `Phòng ${r.room}: giá thuê riêng không hợp lệ.` };
+    }
+    const fFrom = r.exempt_from || null;
+    const fUntil = r.exempt_until || null;
+    if ((fFrom && !/^\d{4}-\d{2}$/.test(fFrom)) || (fUntil && !/^\d{4}-\d{2}$/.test(fUntil))) {
+      return { ok: false, error: `Phòng ${r.room}: khoảng miễn phí phải đúng định dạng YYYY-MM.` };
+    }
+    const anyExempt = Boolean(r.exempt_elec) || Boolean(r.exempt_wifi) || Boolean(r.exempt_water) || Boolean(r.exempt_penalty);
+    if (anyExempt && !fFrom && !fUntil) {
+      return { ok: false, error: `Phòng ${r.room}: chọn miễn phí thì phải nhập khoảng tháng (từ → đến).` };
+    }
+    if (fFrom && fUntil && fFrom > fUntil) {
+      return { ok: false, error: `Phòng ${r.room}: tháng bắt đầu miễn phí phải trước hoặc bằng tháng kết thúc.` };
+    }
   }
   const { error: roomErr } = await sb.from("nhatro_rooms").upsert(
     rooms.map((r) => ({
@@ -686,6 +701,13 @@ export async function upsertRooms(rooms: Room[]) {
       deposit_date: r.deposit_date || null,
       washing_machine: Boolean(r.washing_machine),
       active: r.active ?? true,
+      exempt_elec: Boolean(r.exempt_elec),
+      exempt_wifi: Boolean(r.exempt_wifi),
+      exempt_water: Boolean(r.exempt_water),
+      exempt_penalty: Boolean(r.exempt_penalty),
+      exempt_from: r.exempt_from || null,
+      exempt_until: r.exempt_until || null,
+      room_price: r.room_price == null || Number(r.room_price) === 0 ? null : Number(r.room_price),
     })),
     { onConflict: "house_id,room" }
   );
@@ -696,10 +718,11 @@ export async function upsertRooms(rooms: Room[]) {
 
   const { data: monthRows } = await sb
     .from("nhatro_monthly")
-    .select("ky,room,move_in,move_out,occupancy,tenant,phone,cccd,gender,birth_year,occupation")
+    .select("ky,room,move_in,move_out,occupancy,tenant,phone,cccd,gender,birth_year,occupation,old_index,new_index,close_date,paid,nights,violations,guest")
     .eq("house_id", house.id);
-  const monthsByRoom = new Map<string, { ky: string; move_in: string | null; move_out: string | null; occupancy: number; tenant: string; phone: string; cccd: string | null; gender: string | null; birth_year: string | null; occupation: string | null }[]>();
-  for (const r of (monthRows ?? []) as { room: string; ky: string; move_in: string | null; move_out: string | null; occupancy: number; tenant: string; phone: string; cccd: string | null; gender: string | null; birth_year: string | null; occupation: string | null }[]) {
+  type MonthRef = { room: string; ky: string; move_in: string | null; move_out: string | null; occupancy: number; tenant: string; phone: string; cccd: string | null; gender: string | null; birth_year: string | null; occupation: string | null; old_index: number | null; new_index: number | null; close_date: string | null; paid: number; nights: number; violations: number; guest: number };
+  const monthsByRoom = new Map<string, MonthRef[]>();
+  for (const r of (monthRows ?? []) as MonthRef[]) {
     const arr = monthsByRoom.get(r.room) ?? [];
     arr.push(r);
     monthsByRoom.set(r.room, arr);
@@ -717,6 +740,13 @@ export async function upsertRooms(rooms: Room[]) {
     { field: "tam_tru_date", dbKey: "tam_tru_date" },
     { field: "deposit", dbKey: "deposit" },
     { field: "email", dbKey: "email" },
+    { field: "exempt_elec", dbKey: "exempt_elec" },
+    { field: "exempt_wifi", dbKey: "exempt_wifi" },
+    { field: "exempt_water", dbKey: "exempt_water" },
+    { field: "exempt_penalty", dbKey: "exempt_penalty" },
+    { field: "exempt_from", dbKey: "exempt_from" },
+    { field: "exempt_until", dbKey: "exempt_until" },
+    { field: "room_price", dbKey: "room_price" },
   ];
   const auditEntries: { ky?: string; room: string; field: string; old_val: string; new_val: string }[] = [];
   for (const r of rooms) {
@@ -788,6 +818,29 @@ export async function upsertRooms(rooms: Room[]) {
         .eq("house_id", house.id)
         .eq("room", r.room)
         .eq("ky", newMoveOut.slice(0, 7));
+    }
+    if (newMoveIn) {
+      const miKy = newMoveIn.slice(0, 7);
+      const stale = (monthsByRoom.get(r.room) ?? []).filter(
+        (m) =>
+          m.ky < miKy &&
+          !Number(m.paid) &&
+          m.old_index == null &&
+          m.new_index == null &&
+          m.close_date == null &&
+          m.move_out == null &&
+          !Number(m.nights) &&
+          !Number(m.violations) &&
+          !Number(m.guest)
+      );
+      if (stale.length > 0) {
+        await sb
+          .from("nhatro_monthly")
+          .delete()
+          .eq("house_id", house.id)
+          .eq("room", r.room)
+          .in("ky", stale.map((m) => m.ky));
+      }
     }
     const initial = r.initial_index == null ? null : Number(r.initial_index);
     const miKy = r.move_in ? r.move_in.slice(0, 7) : null;
@@ -1308,18 +1361,21 @@ function buildPhieuHtml(house: House, c: ComputedRow, ky: string, baseUrl: strin
   const oDateStr =
     c.prevMoveIn && c.prevMoveIn.slice(0, 7) === prevKy(ky) ? fmtDateVi(c.prevMoveIn) : null;
   const pl = ` (tháng ${displayKy(prevKy(ky))})`;
+  const exParts = c.exempted ?? [];
+  const exNote = (p: "water" | "wifi" | "elec" | "penalty") =>
+    exParts.includes(p) ? `🎁 Được miễn phí (ưu đãi)` : "";
   const items: [string, number, string][] = [
     ["Tiền phòng", c.rent, c.rentNote || (c.occupancy > 0 ? `(${c.occupancy} người)` : "")],
-    ["Tiền nước" + pl, c.water, utilNote(c.prevOcc, c.prevUtilNote, ky, Boolean(c.washing_machine), c.prevUtilGuest)],
-    ["Wifi + Rác" + pl, c.wifi, utilNote(c.prevOcc, c.prevUtilNote, ky, undefined, c.prevUtilGuest)],
-    ["Tiền điện" + pl, c.elec, c.prevKwh > 0 ? (oDateStr && pDateStr
+    ["Tiền nước" + pl, c.water, [utilNote(c.prevOcc, c.prevUtilNote, ky, Boolean(c.washing_machine), c.prevUtilGuest), exNote("water")].filter(Boolean).join(" · ")],
+    ["Wifi + Rác" + pl, c.wifi, [utilNote(c.prevOcc, c.prevUtilNote, ky, undefined, c.prevUtilGuest), exNote("wifi")].filter(Boolean).join(" · ")],
+    ["Tiền điện" + pl, c.elec, [c.prevKwh > 0 ? (oDateStr && pDateStr
       ? `Số cũ: ${c.prevOldIndex.toLocaleString("vi-VN")} (${oDateStr}) → Số mới: ${c.prevNewIndex.toLocaleString("vi-VN")} (${pDateStr}) = ${c.prevKwh.toLocaleString("vi-VN")} kWh`
       : `Số cũ: ${c.prevOldIndex.toLocaleString("vi-VN")} → Số mới: ${c.prevNewIndex.toLocaleString("vi-VN")} = ${c.prevKwh.toLocaleString("vi-VN")} kWh${pDateStr ? ` (chốt ngày ${pDateStr})` : ""}`
-    ) : ""],
+    ) : "", exNote("elec")].filter(Boolean).join(" · ")],
     [
       "Phụ phí" + pl,
       c.penalty,
-      c.penalty > 0 ? `(khách đêm: ${c.prevNights}, vi phạm: ${c.prevViolations})` : "",
+      [c.penalty > 0 ? `(khách đêm: ${c.prevNights}, vi phạm: ${c.prevViolations})` : "", exNote("penalty")].filter(Boolean).join(" · "),
     ],
   ];
   const rows = items
@@ -1364,6 +1420,7 @@ function buildPhieuHtml(house: House, c: ComputedRow, ky: string, baseUrl: strin
       <tr><td style="border:1px solid #e2e8f0;padding:8px 12px">Đã đóng</td><td style="border:1px solid #e2e8f0;padding:8px 12px;text-align:right;white-space:nowrap">${fmt(c.paid)}</td></tr>
       <tr><td style="border:1px solid #e2e8f0;padding:8px 12px">Còn lại</td><td style="border:1px solid #e2e8f0;padding:8px 12px;text-align:right;white-space:nowrap;font-weight:600">${fmt(c.remain)}</td></tr>
     </table>
+    ${exParts.length > 0 ? `<p style="font-size:12px;color:#15803d;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:8px 10px;margin:10px 0 4px">🎁 Ưu đãi: ${exParts.map((p) => exemptLabel(p)).join(", ")} được miễn phí${c.exempt_from ? ` từ tháng ${displayKy(c.exempt_from)}` : ""}${c.exempt_until ? ` đến tháng ${displayKy(c.exempt_until)}` : ""}</p>` : ""}
     <p style="font-size:13px;margin:12px 0 4px">Hạn thanh toán: ${esc(house.due_text)}</p>
     <p style="font-size:13px;margin:4px 0">Chuyển khoản: ${esc(house.transfer_note)}</p>
     <div style="text-align:center;margin:8px 0">${qrUrl ? `<img src="${esc(qrUrl)}" alt="QR chuyển khoản" width="180" style="width:180px;max-width:180px;height:auto;border:1px solid #e2e8f0;border-radius:8px">` : `<div style="background:#fff7ed;border:1px solid #fdba74;border-radius:8px;padding:10px;color:#9a3412;font-size:13px">⚠ Chưa cấu hình số tài khoản ngân hàng trong Cài đặt. QR chưa hiển thị được số tiền cần chuyển.</div>`}</div>

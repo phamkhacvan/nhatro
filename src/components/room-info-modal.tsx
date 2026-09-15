@@ -4,15 +4,19 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Room } from "@/lib/types";
 import { getRoomInfo, upsertRooms } from "@/app/actions";
-import { isoToVi, viToIso, maskDate, formatThousand, parseThousand } from "@/lib/calc";
+import { isoToVi, viToIso, maskDate, maskMonth, viMonthToKy, kyToViMonth, formatThousand, parseThousand } from "@/lib/calc";
 import { showToast } from "@/components/toast";
 import ContractControl from "@/components/contract-control";
+import { emitRefresh } from "@/lib/refresh";
 
 const input =
   "w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-indigo-400";
 const label = "mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300";
 
-type Draft = Omit<Room, "house_id" | "initial_index"> & { initial_index: string };
+type Draft = Omit<Room, "house_id" | "initial_index" | "room_price"> & {
+  initial_index: string;
+  room_price: string;
+};
 
 function draftKey(d: Draft): string {
   return JSON.stringify({
@@ -31,6 +35,13 @@ function draftKey(d: Draft): string {
     email: d.email?.trim() || null,
     deposit: formatThousand(String(d.deposit ?? 0)),
     deposit_date: d.deposit_date || "",
+    exempt_elec: Boolean(d.exempt_elec),
+    exempt_wifi: Boolean(d.exempt_wifi),
+    exempt_water: Boolean(d.exempt_water),
+    exempt_penalty: Boolean(d.exempt_penalty),
+    exempt_from: d.exempt_from || "",
+    exempt_until: d.exempt_until || "",
+    room_price: formatThousand(String(d.room_price ?? "")),
   });
 }
 
@@ -71,6 +82,13 @@ const apply = () => {
             active: res.room.active,
             initial_index:
               res.room.initial_index == null ? "" : String(res.room.initial_index),
+            exempt_elec: Boolean(res.room.exempt_elec),
+            exempt_wifi: Boolean(res.room.exempt_wifi),
+            exempt_water: Boolean(res.room.exempt_water),
+            exempt_penalty: Boolean(res.room.exempt_penalty),
+            exempt_from: kyToViMonth(res.room.exempt_from),
+            exempt_until: kyToViMonth(res.room.exempt_until),
+            room_price: res.room.room_price == null ? "" : String(res.room.room_price),
           };
           setSavedSnap(draftKey(d));
           setDraft(d);
@@ -103,6 +121,25 @@ const apply = () => {
       showToast("error", "Phải nhập ngày vào ở khi có người thuê.");
       return;
     }
+    const exFrom = draft.exempt_from && draft.exempt_from.trim() ? viMonthToKy(draft.exempt_from) : null;
+    const exUntil = draft.exempt_until && draft.exempt_until.trim() ? viMonthToKy(draft.exempt_until) : null;
+    const hasExempt = Boolean(draft.exempt_elec) || Boolean(draft.exempt_wifi) || Boolean(draft.exempt_water) || Boolean(draft.exempt_penalty);
+    if (hasExempt && !exFrom && !exUntil) {
+      showToast("error", "Có khoản được miễn phí thì phải nhập khoảng tháng (từ → đến).");
+      return;
+    }
+    if (draft.exempt_from && !exFrom) {
+      showToast("error", "Tháng bắt đầu miễn phí chưa đúng định dạng mm/yyyy.");
+      return;
+    }
+    if (draft.exempt_until && !exUntil) {
+      showToast("error", "Tháng kết thúc miễn phí chưa đúng định dạng mm/yyyy.");
+      return;
+    }
+    if (exFrom && exUntil && exFrom > exUntil) {
+      showToast("error", "Tháng bắt đầu miễn phí phải trước hoặc bằng tháng kết thúc.");
+      return;
+    }
     if (draft.move_in && draft.contract_end && viToIso(draft.contract_end)! < viToIso(draft.move_in)!) {
       showToast("error", "Ngày kết thúc HĐ phải sau ngày vào ở.");
       return;
@@ -121,6 +158,13 @@ const apply = () => {
         deposit: parseThousand(draft.deposit),
         initial_index: draft.initial_index === "" ? null : Number(draft.initial_index),
         active: true,
+        exempt_elec: Boolean(draft.exempt_elec),
+        exempt_wifi: Boolean(draft.exempt_wifi),
+        exempt_water: Boolean(draft.exempt_water),
+        exempt_penalty: Boolean(draft.exempt_penalty),
+        exempt_from: exFrom,
+        exempt_until: exUntil,
+        room_price: draft.room_price == null || draft.room_price === "" ? null : parseThousand(draft.room_price),
       },
     ])
       .then((res) => {
@@ -131,6 +175,7 @@ const apply = () => {
           setSavedSnap(draftKey(draft));
           router.refresh();
           onClose();
+          emitRefresh();
         }
       })
       .catch((err) => {
@@ -240,6 +285,17 @@ const apply = () => {
                 placeholder="0"
               />
             </div>
+            <div>
+              <label className={label}>Giá thuê riêng (đ)</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                className={input}
+                value={formatThousand(String(draft.room_price ?? ""))}
+                onChange={(e) => set("room_price", formatThousand(e.target.value))}
+                placeholder="Để trống = theo bảng giá"
+              />
+            </div>
             <div className="flex items-end rounded-lg bg-slate-50 p-3 dark:bg-slate-800/60">
               <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
                 <input
@@ -253,6 +309,59 @@ const apply = () => {
                   <span className="text-slate-400">(nước tính 150.000đ/người/tháng)</span>
                 </span>
               </label>
+            </div>
+
+            <div className="col-span-2 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 dark:border-emerald-500/30 dark:bg-emerald-500/10">
+              <p className="mb-2 text-sm font-medium text-emerald-800 dark:text-emerald-300">
+                🎁 Miễn phí theo thỏa thuận
+              </p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                {([
+                  ["exempt_elec", "Điện"],
+                  ["exempt_wifi", "Wifi + Rác"],
+                  ["exempt_water", "Nước"],
+                  ["exempt_penalty", "Phụ phí"],
+                ] as const).map(([key, labelText]) => (
+                  <label key={key} className="flex cursor-pointer items-center gap-1.5 text-sm text-slate-700 dark:text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(draft[key])}
+                      onChange={(e) => set(key, e.target.checked ? 1 : 0)}
+                      className="h-4 w-4 accent-emerald-600"
+                    />
+                    {labelText}
+                  </label>
+                ))}
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Từ tháng</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={7}
+                    className={input}
+                    value={draft.exempt_from ?? ""}
+                    onChange={(e) => set("exempt_from", maskMonth(e.target.value))}
+                    placeholder="mm/yyyy"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">Đến tháng</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={7}
+                    className={input}
+                    value={draft.exempt_until ?? ""}
+                    onChange={(e) => set("exempt_until", maskMonth(e.target.value))}
+                    placeholder="mm/yyyy"
+                  />
+                </div>
+              </div>
+              <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                Tự động áp dụng trên các kỳ từ tháng bắt đầu đến tháng kết thúc; phiếu in sẽ ghi rõ phần được ưu đãi.
+              </p>
             </div>
           </div>
 

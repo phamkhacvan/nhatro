@@ -8,6 +8,7 @@ import { upsertRooms, deleteRoom } from "@/app/actions";
 import { isoToVi, viToIso, maskDate, formatThousand, parseThousand } from "@/lib/calc";
 import { showToast } from "@/components/toast";
 import ContractControl from "@/components/contract-control";
+import { emitRefresh } from "@/lib/refresh";
 
 const label = "mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300";
 const input =
@@ -29,6 +30,7 @@ type DisplayRoom = {
   email: string | null;
   deposit: number | string;
   deposit_date: string;
+  room_price: number | string;
 };
 
 function displayOf(r: DisplayRoom): string {
@@ -48,6 +50,7 @@ function displayOf(r: DisplayRoom): string {
     email: r.email?.trim() || null,
     deposit: formatThousand(String(r.deposit ?? 0)),
     deposit_date: r.deposit_date || "",
+    room_price: formatThousand(String(r.room_price ?? "")),
   });
 }
 
@@ -73,11 +76,12 @@ export default function RoomsManager({
       contract_end: isoToVi(r.contract_end),
       tam_tru_date: isoToVi(r.tam_tru_date),
       deposit_date: isoToVi(r.deposit_date),
+      room_price: r.room_price ?? "",
     }))
   );
   const [savedSnap, setSavedSnap] = useState<string>(() =>
     JSON.stringify(
-      rooms.map((r) => displayOf({ ...r, cccd: r.cccd ?? "", gender: r.gender ?? "", birth_year: r.birth_year ?? "", occupation: r.occupation ?? "", move_in: isoToVi(r.move_in), contract_end: isoToVi(r.contract_end), tam_tru_date: isoToVi(r.tam_tru_date), deposit_date: isoToVi(r.deposit_date) }))
+      rooms.map((r) => displayOf({ ...r, cccd: r.cccd ?? "", gender: r.gender ?? "", birth_year: r.birth_year ?? "", occupation: r.occupation ?? "", move_in: isoToVi(r.move_in), contract_end: isoToVi(r.contract_end), tam_tru_date: isoToVi(r.tam_tru_date), deposit_date: isoToVi(r.deposit_date), room_price: r.room_price ?? "" }))
     )
   );
 
@@ -91,7 +95,7 @@ export default function RoomsManager({
   function addRoom() {
     setList((prev) => [
       ...prev,
-      { room: "", tenant: "", phone: "", email: "", cccd: "", gender: "", birth_year: "", occupation: "", occupancy: 1, move_in: "", contract_end: "", tam_tru_date: "", deposit: 0, deposit_date: "", active: true, washing_machine: false },
+      { room: "", tenant: "", phone: "", email: "", cccd: "", gender: "", birth_year: "", occupation: "", occupancy: 1, move_in: "", contract_end: "", tam_tru_date: "", deposit: 0, deposit_date: "", active: true, washing_machine: false, room_price: "" },
     ]);
   }
 
@@ -106,6 +110,10 @@ export default function RoomsManager({
     }
     if (list.some((r) => parseThousand(r.deposit) < 0)) {
       showToast("error", "Lưu thất bại: tiền cọc không được âm.");
+      return;
+    }
+    if (list.some((r) => r.room_price !== "" && r.room_price != null && parseThousand(r.room_price) < 0)) {
+      showToast("error", "Lưu thất bại: giá thuê riêng không được âm.");
       return;
     }
     const noMoveIn = list.find((r) => (Number(r.occupancy) || 0) > 0 && !r.move_in);
@@ -141,6 +149,7 @@ export default function RoomsManager({
       deposit: parseThousand(r.deposit),
       deposit_date: viToIso(r.deposit_date ?? ""),
       active: true,
+      room_price: r.room_price === "" || r.room_price == null ? null : parseThousand(r.room_price),
     }));
     setSaving(true);
     const keep = new Set(data.map((d) => d.room));
@@ -156,6 +165,7 @@ export default function RoomsManager({
           showToast("success", "Lưu thành công");
           setSavedSnap(listKey);
           router.refresh();
+          emitRefresh();
         }
       })
       .catch((err) => {
@@ -250,7 +260,7 @@ export default function RoomsManager({
       <div className="space-y-4">
         {list.map((r, i) => (
           <div key={i} className="rounded-xl border-2 border-slate-300 bg-slate-50/60 p-3 dark:border-slate-600 dark:bg-slate-800/40">
-            <div className="grid grid-cols-[64px_1fr_1fr_1fr_58px_100px_122px_122px_122px_115px_130px_36px] items-end gap-2">
+            <div className="grid grid-cols-[64px_1fr_1fr_1fr_58px_100px_122px_122px_122px_115px_130px_110px_36px] items-end gap-2">
             <div>
               <label className={label}>Phòng</label>
               <input className={input} value={r.room} onChange={(e) => update(i, "room", e.target.value)} />
@@ -350,6 +360,18 @@ export default function RoomsManager({
                 value={r.deposit_date ?? ""}
                 onChange={(e) => update(i, "deposit_date", maskDate(e.target.value))}
                 placeholder="dd/mm/yyyy"
+              />
+            </div>
+            <div>
+              <label className={label}>Giá thuê riêng (đ)</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                className={input}
+                value={formatThousand(String(r.room_price ?? ""))}
+                onChange={(e) => update(i, "room_price", formatThousand(e.target.value))}
+                placeholder="Trống = bảng giá"
+                title="Để trống = tính theo bảng giá theo số người. Nhập số = giá cố định theo thỏa thuận."
               />
             </div>
             <button

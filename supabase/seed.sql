@@ -72,6 +72,16 @@ create table if not exists nhatro_rooms (
   washing_machine boolean default false,
   active boolean default true
 );
+
+-- Miễn phí theo thành phần (điện/wifi/nước/phụ phí) có khoảng tháng áp dụng
+alter table nhatro_rooms add column if not exists exempt_elec boolean default false;
+alter table nhatro_rooms add column if not exists exempt_wifi boolean default false;
+alter table nhatro_rooms add column if not exists exempt_water boolean default false;
+alter table nhatro_rooms add column if not exists exempt_penalty boolean default false;
+alter table nhatro_rooms add column if not exists exempt_from text;
+alter table nhatro_rooms add column if not exists exempt_until text;
+-- Giá thuê riêng theo phòng (null = dùng bảng giá theo số người)
+alter table nhatro_rooms add column if not exists room_price numeric;
 create unique index if not exists uq_nhatro_rooms_house on nhatro_rooms (house_id, room);
 insert into nhatro_rooms (house_id, room, tenant, phone, cccd, gender, birth_year, occupation, occupancy, move_in, email, deposit, deposit_date) values
   (1, '301', '', '', '', '', '', '', 0, null, null, 0, null),

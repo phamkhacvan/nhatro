@@ -16,6 +16,7 @@ export default function PhieuCard({
   reference,
   address,
   kyLabel,
+  exSummary,
 }: {
   house: House;
   c: ComputedRow;
@@ -24,6 +25,7 @@ export default function PhieuCard({
   reference: string;
   address: string;
   kyLabel: string;
+  exSummary?: string | null;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [img, setImg] = useState<string | null>(null);
@@ -131,6 +133,12 @@ export default function PhieuCard({
               </tr>
             </tbody>
           </table>
+
+          {exSummary && (
+            <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-center text-[12px] font-medium text-emerald-700 sm:text-[13px]">
+              {exSummary}
+            </div>
+          )}
 
           <div className="mt-3 space-y-1 rounded-xl bg-slate-50 p-3 text-[13px] text-slate-600 sm:mt-5 sm:p-4 sm:text-sm">
             <p>🗓 Hạn thanh toán: {house.due_text}</p>
