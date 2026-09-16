@@ -395,6 +395,8 @@ async function ensureMonth(ky: string, houseId: number): Promise<void> {
       nights: 0,
       violations: 0,
       guest: 0,
+      guest_dates: [],
+      guest_mode: "chung",
       paid: 0,
     });
   }
@@ -440,6 +442,12 @@ export async function saveMonth(ky: string, rows: MonthlyRow[]) {
       nights: Number(r.nights) || 0,
       violations: Number(r.violations) || 0,
       guest: Number(r.guest) ? 1 : 0,
+      guest_dates: Array.isArray(r.guest_dates)
+      ? r.guest_dates
+          .filter((g) => g && typeof g.date === "string" && g.date)
+          .map((g) => ({ date: g.date, name: g.name || "", relation: g.relation || "" }))
+      : [],
+      guest_mode: r.guest_mode === "rieng" ? "rieng" : "chung",
     };
   });
 
@@ -458,7 +466,7 @@ export async function saveMonth(ky: string, rows: MonthlyRow[]) {
     if (wantPaid !== oldPaid) paidIntents.push({ room: r.room, paid: wantPaid, old: oldPaid });
   }
 
-  const fieldsToTrack: (keyof MonthlyRow)[] = ["old_index", "old_date", "new_index", "close_date", "move_in", "move_out", "nights", "violations", "paid"];
+  const fieldsToTrack: (keyof MonthlyRow)[] = ["old_index", "old_date", "new_index", "close_date", "move_in", "move_out", "nights", "guest_dates", "guest_mode", "violations", "paid"];
   const auditEntries: { ky?: string; room: string; field: string; old_val: string; new_val: string }[] = [];
   for (const u of upserts) {
     const old = existMap.get(u.room);
@@ -1087,6 +1095,8 @@ const old_index = p ? (p.new_index ?? p.old_index) : null;
         nights: 0,
         violations: 0,
         guest: 0,
+        guest_dates: [],
+        guest_mode: "chung",
         paid: 0,
       };
     });

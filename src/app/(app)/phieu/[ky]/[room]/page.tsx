@@ -61,7 +61,13 @@ export default async function PhieuPage({
       value: fmt(c.penalty),
       note: [
         c.penalty > 0
-          ? `(khách đêm: ${c.prevNights}, khách ở trên 5 ngày: ${c.hasGuest ? 1 : 0}, vi phạm: ${c.prevViolations})`
+          ? `(${[
+              c.prevGuestDates.length ? `${c.prevNights} đêm khách qua đêm${c.prevGuestMode === "rieng" ? ` × ${c.prevGuestPeople} người (riêng)` : ""}` : "",
+              c.hasGuest ? "khách ở trên 5 ngày" : "",
+              c.prevViolations ? `${c.prevViolations} lần vi phạm` : "",
+            ]
+              .filter(Boolean)
+              .join(" · ")})`
           : "",
         exNote("penalty"),
       ]

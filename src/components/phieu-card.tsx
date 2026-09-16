@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { toPng } from "html-to-image";
 import { House, ComputedRow } from "@/lib/types";
-import { fmt } from "@/lib/calc";
+import { fmt, guestDayVi, guestNightRows } from "@/lib/calc";
 import { showToast } from "@/components/toast";
 
 type Item = { label: string; value: string; note: string };
@@ -133,6 +133,43 @@ export default function PhieuCard({
               </tr>
             </tbody>
           </table>
+
+          {c.prevGuestDates.length > 0 && (
+            <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 text-[12px] sm:mt-4 sm:text-[13px]">
+              <div className="flex items-center justify-between border-b border-slate-200 bg-indigo-50/70 px-3 py-1.5">
+                <span className="font-bold text-slate-800">
+                  Khách qua đêm · chi tiết từng đêm
+                </span>
+                <span className="font-semibold tabular-nums text-indigo-700">
+                  {c.prevGuestMode === "rieng" ? "200.000đ/người/đêm" : ""}
+                </span>
+              </div>
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wide text-slate-400">
+                    <th className="px-3 py-1 text-left font-semibold">Ngày</th>
+                    <th className="px-2 py-1 text-left font-semibold">Khách</th>
+                    <th className="px-2 py-1 text-center font-semibold">Số người</th>
+                    <th className="px-3 py-1 text-right font-semibold">Tiền đêm</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {guestNightRows(c.prevGuestDates, c.prevGuestMode).map((r, i) => (
+                    <tr key={r.date} className={i % 2 === 1 ? "bg-slate-50/60" : ""}>
+                      <td className="whitespace-nowrap px-3 py-1.5 tabular-nums text-slate-500">{guestDayVi(r.date)}</td>
+                      <td className="px-2 py-1.5 font-medium text-slate-800">
+                        {r.people.map((p) => [p.name, p.relation].filter(Boolean).join(" · ") || "—").join(" + ")}
+                      </td>
+                      <td className="px-2 py-1.5 text-center tabular-nums text-slate-600">{r.people.length} người</td>
+                      <td className="w-1/6 px-3 py-1.5 text-right tabular-nums text-slate-700">
+                        {c.prevGuestMode === "chung" && r.fee === 0 ? "miễn phí" : fmt(r.fee)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {exSummary && (
             <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-center text-[12px] font-medium text-emerald-700 sm:text-[13px]">

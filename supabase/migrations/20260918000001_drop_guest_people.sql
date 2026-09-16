@@ -1,0 +1,1 @@
+alter table public.nhatro_monthly drop column if exists guest_people;

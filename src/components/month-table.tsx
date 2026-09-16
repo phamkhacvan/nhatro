@@ -1,8 +1,8 @@
 "use client";
 
 import { ReactNode, useState, useEffect, useRef, useCallback } from "react";
-import { House, MonthlyRow } from "@/lib/types";
-import { computeRow, fmt, displayKy, penaltyFor, nextKy, prevKy, prorate, parseKy, isoToVi, viToIso, maskDate, formatThousand, parseThousand } from "@/lib/calc";
+import { House, MonthlyRow, GuestNight } from "@/lib/types";
+import { computeRow, fmt, displayKy, guestNightMoney, guestModeOf, nextKy, prevKy, prorate, parseKy, isoToVi, viToIso, maskDate, formatThousand, parseThousand, daysInMonth, guestNights, guestSummary, guestChipLabel, normGuestDates, rowNights } from "@/lib/calc";
 import { saveMonth } from "@/app/actions";
 import { showToast } from "@/components/toast";
 import RoomInfoModal from "@/components/room-info-modal";
@@ -24,6 +24,8 @@ type Draft = {
   nights: string;
   violations: string;
   guest: boolean;
+  guest_dates: GuestNight[];
+  guest_mode: "chung" | "rieng";
   washing_machine: boolean;
   paid: string;
   exempt_elec: boolean;
@@ -50,6 +52,8 @@ function toDraft(r: MonthlyRow): Draft {
     nights: String(r.nights ?? 0),
     violations: String(r.violations ?? 0),
     guest: Number(r.guest) > 0,
+    guest_dates: normGuestDates(r.guest_dates),
+    guest_mode: r.guest_mode === "rieng" ? "rieng" : "chung",
     washing_machine: Boolean(r.washing_machine),
     paid: r.paid == null ? "" : formatThousand(String(r.paid)),
     exempt_elec: Boolean(r.exempt_elec),
@@ -75,9 +79,13 @@ function toRow(ky: string, d: Draft): MonthlyRow {
     close_date: viToIso(d.close_date),
     move_in: viToIso(d.move_in),
     move_out: viToIso(d.move_out),
-    nights: Number(d.nights) || 0,
+    nights: d.guest_dates.length > 0 ? new Set(d.guest_dates.map((g) => g.date)).size : Number(d.nights) || 0,
     violations: Number(d.violations) || 0,
     guest: d.guest ? 1 : 0,
+    guest_dates: d.guest_dates
+      .filter((g) => typeof g.date === "string" && g.date)
+      .map((g) => ({ date: g.date, name: g.name || "", relation: g.relation || "" })),
+    guest_mode: d.guest_mode === "rieng" ? "rieng" : "chung",
     washing_machine: d.washing_machine,
     paid: parseThousand(d.paid),
     exempt_elec: d.exempt_elec,
@@ -88,6 +96,12 @@ function toRow(ky: string, d: Draft): MonthlyRow {
     exempt_until: d.exempt_until || null,
     room_price: d.room_price === "" ? null : parseThousand(d.room_price),
   };
+}
+
+// Số đêm khách từ danh sách ngày (ưu tiên); row cũ chưa có danh sách thì fallback theo nights nhập tay
+function dNights(d: Draft): number {
+  const g = guestNights(d.guest_dates);
+  return g > 0 ? g : Number(d.nights) || 0;
 }
 
 type SortKey =
@@ -116,7 +130,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
     setPrevRowsState(rows);
     setEditing(rows.map(toDraft));
   }
-  const [pen, setPen] = useState<{ i: number; nights: string; violations: string; guest: boolean } | null>(null);
+  const [pen, setPen] = useState<{ i: number; picker: string; name: string; rel: string; dates: GuestNight[]; violations: string; guest: boolean; mode: "chung" | "rieng" } | null>(null);
   const [roomModal, setRoomModal] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" } | null>(null);
@@ -150,6 +164,8 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
         o.nights !== ed.nights ||
         o.violations !== ed.violations ||
         o.guest !== ed.guest ||
+        JSON.stringify(o.guest_dates) !== JSON.stringify(ed.guest_dates) ||
+        o.guest_mode !== ed.guest_mode ||
         o.paid !== ed.paid
       ) {
         d = true;
@@ -186,7 +202,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
 
   function openPen(i: number) {
     const d = editing[i];
-    setPen({ i, nights: d.nights, violations: d.violations, guest: d.guest });
+    setPen({ i, picker: "", name: "", rel: "", dates: normGuestDates(d.guest_dates), violations: d.violations, guest: d.guest, mode: d.guest_mode === "rieng" ? "rieng" : "chung" });
   }
 
   function set(r: Draft, key: keyof Draft, val: string) {
@@ -202,7 +218,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
       (ex.includes("water") ? 0 : prorate(occ * waterPerHead, ky, d.move_in || null, d.move_out || null).amount) +
       (ex.includes("wifi") ? 0 : prorate(occ * Number(house.wifi_rate), ky, d.move_in || null, d.move_out || null).amount) +
       (ex.includes("elec") || c.kwh == null ? 0 : c.kwh * Number(house.elec_rate)) +
-      (ex.includes("penalty") ? 0 : penaltyFor(Number(d.nights) || 0, Number(d.violations) || 0) + (d.guest ? 500000 : 0));
+      (ex.includes("penalty") ? 0 : guestNightMoney(d.guest_dates, d.guest_mode, Number(d.violations) || 0) + (d.guest ? 500000 : 0));
     return { ...c, nextBill };
   });
 
@@ -618,13 +634,13 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                     {c.penalty > 0 && (
                       <div className="text-xs font-normal text-slate-400">
                         {c.prevNights > 0 || c.prevViolations > 0 || c.hasGuest ? (
-                          `khách đêm: ${c.prevNights}, khách ở trên 5 ngày: ${c.hasGuest ? 1 : 0}, vi phạm: ${c.prevViolations}`
+                          `khách đêm: ${c.prevGuestDates.length ? `${guestSummary(c.prevGuestDates)} (${c.prevNights} đêm)` : c.prevNights}, khách ở trên 5 ngày: ${c.hasGuest ? 1 : 0}, vi phạm: ${c.prevViolations}`
                         ) : null}
                       </div>
                     )}
-                    {(Number(d.nights) > 0 || Number(d.violations) > 0) && (
+                    {(dNights(d) > 0 || Number(d.violations) > 0) && (
                       <div className="text-xs font-normal text-indigo-500 dark:text-indigo-400">
-                        → thu tháng {nextM}: khách đêm {d.nights} · vi phạm {d.violations} = {fmt(penaltyFor(Number(d.nights) || 0, Number(d.violations) || 0))}
+                        → thu tháng {nextM}: khách đêm {d.guest_mode === "rieng" ? `${d.guest_dates.length} lượt người-đêm (${dNights(d)} đêm) · 200.000đ/người/đêm` : `${dNights(d)} đêm`}{d.guest_dates.length ? ` (${guestSummary(d.guest_dates)})` : ""} · vi phạm {d.violations} = {fmt(guestNightMoney(d.guest_dates, d.guest_mode, Number(d.violations) || 0))}
                       </div>
                     )}
                     {d.guest && (
@@ -833,12 +849,12 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                 </button>
                 {c.penalty > 0 && (
                   <p className="mt-1 text-xs text-slate-400">
-                    {`tháng ${prevM}: khách đêm: ${c.prevNights}, khách ở trên 5 ngày: ${c.hasGuest ? 1 : 0}, vi phạm: ${c.prevViolations}`}
+                    {`tháng ${prevM}: khách đêm: ${c.prevGuestDates.length ? `${guestSummary(c.prevGuestDates)} (${c.prevNights} đêm)` : c.prevNights}, khách ở trên 5 ngày: ${c.hasGuest ? 1 : 0}, vi phạm: ${c.prevViolations}`}
                   </p>
                 )}
-                {(Number(d.nights) > 0 || Number(d.violations) > 0) && (
+                {(dNights(d) > 0 || Number(d.violations) > 0) && (
                   <p className="mt-1 text-xs text-indigo-500 dark:text-indigo-400">
-                    → thu tháng {nextM}: {d.nights} đêm · {d.violations} lần = {fmt(penaltyFor(Number(d.nights) || 0, Number(d.violations) || 0))}
+                    → thu tháng {nextM}: khách đêm {d.guest_mode === "rieng" ? `${d.guest_dates.length} lượt người-đêm (${dNights(d)} đêm) · 200.000đ/người/đêm` : `${dNights(d)} đêm`}{d.guest_dates.length ? ` (${guestSummary(d.guest_dates)})` : ""} · vi phạm {d.violations} lần = {fmt(guestNightMoney(d.guest_dates, d.guest_mode, Number(d.violations) || 0))}
                   </p>
                 )}
                 {d.guest && (
@@ -891,15 +907,16 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
 
       {pen &&
         (() => {
-          const n = Number(pen.nights) || 0;
+          const n = new Set(pen.dates.map((g) => g.date)).size;
           const v = Number(pen.violations) || 0;
-          const pc = penaltyFor(n, v);
+          const q = pen.dates.length;
+          const pc = guestNightMoney(pen.dates, pen.mode, v);
           const pd = prevMap.get(editing[pen.i].room) ?? null;
-          const prevPc = penaltyFor(Number(pd?.nights) || 0, Number(pd?.violations) || 0);
+          const prevPc = guestNightMoney(pd?.guest_dates, guestModeOf(pd), Number(pd?.violations) || 0);
           const nBreak =
-            n <= 2
-              ? "Miễn phí 2 đêm đầu tiên"
-              : `Đêm 3: 200.000đ` + (n > 3 ? ` + ${n - 3} đêm × 250.000đ = ${fmt(200000 + (n - 3) * 250000)}` : "");
+            pen.mode === "rieng"
+              ? `${q} lượt người-đêm × 200.000đ = ${fmt(q * 200000)}`
+              : "xếp theo ngày: đêm 1-2 miễn phí · đêm 3 = 200.000đ/người · đêm 4+ = 250.000đ/người/đêm";
           return (
             <div
               className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
@@ -918,16 +935,140 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                 <div className="space-y-4">
                   <div>
                     <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
-                      Số đêm khách (khách đêm)
+                      Cách tính khách đêm
                     </label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={pen.nights}
-                      onFocus={(e) => e.currentTarget.select()}
-                      onChange={(e) => setPen({ ...pen, nights: e.target.value })}
-                      className={inputCls + " w-full"}
-                    />
+                    <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => setPen({ ...pen, mode: "chung" })}
+                        className={"rounded-md px-2 py-1.5 text-sm font-semibold transition " + (pen.mode === "chung" ? "bg-white text-indigo-700 shadow ring-1 ring-indigo-200 dark:bg-slate-900 dark:text-indigo-300 dark:ring-slate-700" : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200")}
+                      >
+                        Option chung
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPen({ ...pen, mode: "rieng" })}
+                        className={"rounded-md px-2 py-1.5 text-sm font-semibold transition " + (pen.mode === "rieng" ? "bg-white text-indigo-700 shadow ring-1 ring-indigo-200 dark:bg-slate-900 dark:text-indigo-300 dark:ring-slate-700" : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200")}
+                      >
+                        Option riêng
+                      </button>
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
+                      {pen.mode === "rieng"
+                        ? "Mỗi ngày qua đêm tính 200.000đ/người, không miễn đêm đầu (dùng cho phòng 101 từ 01/10/2026)."
+                        : "Xếp theo ngày: đêm 1-2 miễn phí; đêm 3 = 200.000đ/người; đêm 4+ = 250.000đ/người/đêm (nguyên tắc Điều 6)."}
+                    </p>
+                  </div>
+                  <div>
+                    <div className="mb-1 flex items-center justify-between">
+                      <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Khách qua đêm (khách đêm)
+                      </label>
+                      {n > 0 && (
+                        <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                          {n} đêm · {q} người · tiền = {fmt(pc - v * 500000)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <input
+                          type="date"
+                          min={`${ky}-01`}
+                          max={`${ky}-${String(daysInMonth(ky)).padStart(2, "0")}`}
+                          value={pen.picker}
+                          onChange={(e) => setPen({ ...pen, picker: e.target.value })}
+                          className={inputCls + " w-full"}
+                        />
+                        <input
+                          type="text"
+                          placeholder="Tên khách"
+                          maxLength={40}
+                          value={pen.name}
+                          onChange={(e) => setPen({ ...pen, name: e.target.value })}
+                          className={inputCls + " w-full"}
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          list="guest-relations"
+                          placeholder="Mối quan hệ với người thuê"
+                          maxLength={40}
+                          value={pen.rel}
+                          onChange={(e) => setPen({ ...pen, rel: e.target.value })}
+                          className={inputCls + " w-full"}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const d = pen.picker;
+                            if (!d) return;
+                            setPen({
+                              ...pen,
+                              picker: "",
+                              name: "",
+                              rel: "",
+                              dates: [...pen.dates, { date: d, name: pen.name.trim(), relation: pen.rel.trim() }]
+                                .sort((a, b) => (a.date < b.date ? -1 : 1)),
+                            });
+                          }}
+                          disabled={!pen.picker || pen.name.trim() === ""}
+                          className="shrink-0 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          ＋ Thêm
+                        </button>
+                      </div>
+                      <datalist id="guest-relations">
+                        <option value="ông" />
+                        <option value="bà" />
+                        <option value="bố" />
+                        <option value="mẹ" />
+                        <option value="anh ruột" />
+                        <option value="em ruột" />
+                        <option value="chị ruột" />
+                        <option value="cháu ruột" />
+                        <option value="họ hàng" />
+                        <option value="bạn (cùng giới)" />
+                      </datalist>
+                    </div>
+                    {pen.dates.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {[...pen.dates].sort((a, b) => (a.date < b.date ? -1 : 1)).map((g) => {
+                          const idx = pen.dates.findIndex(
+                            (x) => x.date === g.date && x.name === g.name && x.relation === g.relation
+                          );
+                          return (
+                            <span
+                              key={`${g.date}-${g.name}-${g.relation}`}
+                              className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300"
+                            >
+                              {guestChipLabel(g)}
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPen({
+                                    ...pen,
+                                    dates: idx >= 0
+                                      ? [...pen.dates.slice(0, idx), ...pen.dates.slice(idx + 1)]
+                                      : pen.dates,
+                                  })
+                                }
+                                className="font-bold text-indigo-400 transition hover:text-red-500"
+                                title="Xóa người này"
+                              >
+                                ×
+                              </button>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
+                      Mỗi lần thêm là <strong className="font-semibold">1 người · 1 đêm</strong> ({q} lượt người-đêm trong {n} đêm).
+                      2 người cùng 1 đêm → chọn cùng ngày và thêm 2 lần, mỗi lần 1 tên + 1 mối quan hệ.
+                      {pen.mode === "chung" ? " Chung vẫn tính theo đêm (cùng đêm nhiều người = 1 đêm)." : ""}
+                    </p>
                   </div>
                   <div>
                     <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -958,11 +1099,12 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                   <div className="space-y-1 rounded-lg bg-slate-50 p-3 text-sm text-slate-700 dark:bg-slate-800 dark:text-slate-300">
                     {prevPc > 0 && (
                       <p className="text-slate-500 dark:text-slate-400">
-                        Phiếu tháng {m} đang thu phần tháng {prevM}: khách đêm {pd?.nights}, khách ở trên 5
+                        Phiếu tháng {m} đang thu phần tháng {prevM}: khách đêm {rowNights(pd)}
+                        {pd?.guest_dates?.length ? ` (${guestSummary(pd.guest_dates)})` : ""}, khách ở trên 5
                         ngày {pd?.guest ? 1 : 0}, vi phạm {pd?.violations} = {fmt(prevPc)}
                       </p>
                     )}
-                    <p>Khách đêm: {n} đêm → {nBreak}</p>
+                    <p>Khách đêm: {q} lượt người-đêm ({n} đêm) · {nBreak}</p>
                     <p>Vi phạm: {v} × 500.000đ = {fmt(v * 500000)}</p>
                     {pen.guest && <p>Khách qua ở: + 500.000đ</p>}
                     <p className="pt-1 font-bold text-blue-900 dark:text-blue-300">
@@ -979,8 +1121,12 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                   </button>
                   <button
                     onClick={() => {
+                      const entries = [...pen.dates].sort((a, b) => (a.date < b.date ? -1 : 1));
+                      const nDays = new Set(entries.map((g) => g.date)).size;
                       const next = editing.map((x, j) =>
-                        j === pen.i ? { ...x, nights: pen.nights, violations: pen.violations, guest: pen.guest } : x
+                        j === pen.i
+                          ? { ...x, guest_dates: entries, nights: String(nDays), guest_mode: pen.mode, violations: pen.violations, guest: pen.guest }
+                          : x
                       );
                       setEditing(next);
                       setPen(null);

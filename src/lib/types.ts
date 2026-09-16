@@ -72,6 +72,14 @@ export type ContractRow = {
   created_at?: string;
 };
 
+export type GuestNight = {
+  date: string;
+  name: string;
+  relation: string;
+};
+
+export type GuestMode = "chung" | "rieng";
+
 export type MonthlyRow = {
   id?: number;
   house_id?: number;
@@ -94,6 +102,8 @@ export type MonthlyRow = {
   violations: number;
   guest: number;
   paid: number;
+  guest_dates?: GuestNight[] | null;
+  guest_mode?: GuestMode | string | null;
   washing_machine?: boolean;
   // Trạng thái miễn phí theo thành phần (sync từ nhatro_rooms qua applyRoomSync)
   exempt_elec?: boolean;
@@ -123,6 +133,9 @@ export type ComputedRow = MonthlyRow & {
   prevNewIndex: number;
   prevKwh: number;
   prevNights: number;
+  prevGuestDates: GuestNight[];
+  prevGuestMode: GuestMode;
+  prevGuestPeople: number;
   prevViolations: number;
   prevCloseDate: string | null;
   prevMoveIn: string | null;

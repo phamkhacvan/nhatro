@@ -1,4 +1,4 @@
-import { House, PriceRow, MonthlyRow, ComputedRow, Room } from "./types";
+import { House, PriceRow, MonthlyRow, ComputedRow, Room, GuestNight } from "./types";
 
 export function isoToVi(iso: string | null | undefined): string {
   if (!iso) return "";
@@ -193,10 +193,116 @@ export function parseThousand(v: string | number | null | undefined): number {
   return Number(String(v).replace(/,/g, "") ) || 0;
 }
 
-export function penaltyFor(nights: number, violations: number): number {
-  const n = Number(nights) || 0;
+export const GUEST_RIENG_RATE = 200000;
+
+// Tiền khách đêm (chưa gồm vi phạm) theo option:
+// - chung: xếp các đêm theo ngày — đêm 1-2 miễn phí; đêm 3 = 200.000đ/người; đêm 4+ = 250.000đ/người/đêm
+// - rieng: mỗi lượt người-đêm x 200.000đ (không miễn đêm đầu)
+export function guestNightMoney(
+  dates: GuestNight[] | (string | GuestNight)[] | null | undefined,
+  mode: string | null | undefined,
+  violations: number
+): number {
   const v = Number(violations) || 0;
-  return (n <= 2 ? 0 : 200000 + Math.max(0, n - 3) * 250000) + v * 500000;
+  const entries = normGuestDates(dates);
+  let base = 0;
+  if (mode === "rieng") {
+    base = entries.length * GUEST_RIENG_RATE;
+  } else {
+    base = guestNightRows(dates, mode).reduce((s, r) => s + r.fee, 0);
+  }
+  return base + v * 500000;
+}
+
+export type GuestNightRow = {
+  date: string;
+  people: GuestNight[];
+  fee: number;
+};
+
+// Phân rã theo từng đêm: mỗi ngày gom số người + tiền đêm đó.
+// - chung: đêm thứ mấy của tháng (xếp theo ngày): đêm 1-2 miễn phí, đêm 3 = 200.000đ/người, đêm 4+ = 250.000đ/người
+// - rieng: số người đêm đó × 200.000đ
+export function guestNightRows(
+  dates?: GuestNight[] | (string | GuestNight)[] | null,
+  mode?: string | null
+): GuestNightRow[] {
+  const entries = normGuestDates(dates);
+  const byDate = new Map<string, GuestNight[]>();
+  for (const g of entries) {
+    const arr = byDate.get(g.date);
+    if (arr) arr.push(g);
+    else byDate.set(g.date, [g]);
+  }
+  const datesArr = Array.from(byDate.keys()).sort();
+  const rate = (i: number) => (i < 2 ? 0 : i === 2 ? 200000 : 250000);
+  return datesArr.map((date, i) => {
+    const people = byDate.get(date) ?? [];
+    const fee =
+      mode === "rieng"
+        ? people.length * GUEST_RIENG_RATE
+        : people.length * rate(i);
+    return { date, people, fee };
+  });
+}
+
+export function guestModeOf(r?: { guest_mode?: string | null } | null): "chung" | "rieng" {
+  return r?.guest_mode === "rieng" ? "rieng" : "chung";
+}
+
+// Tổng lượt người-đêm = số entry khách (mỗi entry = 1 người x 1 đêm)
+export function guestPersonNights(dates?: GuestNight[] | (string | GuestNight)[] | null): number {
+  return normGuestDates(dates).length;
+}
+
+// Chuẩn hóa guest_dates (có thể là record {date,name,relation} hoặc chuỗi ngày của dữ liệu cũ) -> record chuẩn
+export function normGuestDates(dates?: GuestNight[] | (string | GuestNight)[] | null): GuestNight[] {
+  if (!Array.isArray(dates)) return [];
+  const out: GuestNight[] = [];
+  for (const d of dates) {
+    if (typeof d === "string") {
+      if (d) out.push({ date: d, name: "", relation: "" });
+    } else if (d && typeof d.date === "string" && d.date) {
+      out.push({ date: d.date, name: d.name || "", relation: d.relation || "" });
+    }
+  }
+  return out;
+}
+
+// "yyyy-mm-dd" -> "dd/mm"
+export function guestDayVi(iso: string): string {
+  const p = iso.split("-");
+  return p.length === 3 ? `${p[2]}/${p[1]}` : iso;
+}
+
+// Số đêm khách = số ngày KHÁC NHAU trong danh sách (cùng đêm 2 khách vẫn tính 1 đêm)
+export function guestNights(guest_dates?: GuestNight[] | (string | GuestNight)[] | null): number {
+  return new Set(normGuestDates(guest_dates).map((g) => g.date)).size;
+}
+
+// Chỉ hiện ngày, gọn: "10/09, 12/09"
+export function guestDaysVi(dates?: GuestNight[] | (string | GuestNight)[] | null): string {
+  return Array.from(new Set(normGuestDates(dates).map((g) => g.date))).sort().map(guestDayVi).join(", ");
+}
+
+// Nhãn chip: "10/09 · Lan (bạn học)"
+export function guestChipLabel(g: GuestNight): string {
+  const p = [guestDayVi(g.date)];
+  if (g.name) p.push(g.name);
+  if (g.relation) p.push(`(${g.relation})`);
+  return p.join(" · ");
+}
+
+// Mô tả đầy đủ (chứng cứ): "10/09 · Lan (bạn học), 12/09 · Tuấn (anh)"
+export function guestSummary(dates?: GuestNight[] | (string | GuestNight)[] | null): string {
+  return normGuestDates(dates).map(guestChipLabel).join(", ");
+}
+
+// Ưu tiên suy từ guest_dates; row cũ chưa có guest_dates thì fallback theo nights nhập tay
+export function rowNights(r?: Pick<MonthlyRow, "guest_dates" | "nights"> | null): number {
+  if (!r) return 0;
+  const g = guestNights(r.guest_dates);
+  return g > 0 ? g : Number(r.nights) || 0;
 }
 
 export function vietQrLocalUrl(opts: {
@@ -271,7 +377,7 @@ export function computeRow(
   const wifi = noWifi ? 0 : prorate(pOcc * Number(s.wifi_rate), pKy, pMi, pMo).amount;
   const wNote = prorate(pOcc * waterPerHead, pKy, pMi, pMo).note;
   const elec = noElec || pKwh == null ? 0 : pKwh * Number(s.elec_rate);
-  const penaltyBase = penaltyFor(Number(prevRow?.nights) || 0, Number(prevRow?.violations) || 0);
+  const penaltyBase = guestNightMoney(prevRow?.guest_dates, guestModeOf(prevRow), Number(prevRow?.violations) || 0);
   const guestFee = guest ? 500000 : 0;
   const penalty = noPenalty ? 0 : penaltyBase + guestFee;
   const total = rent + water + wifi + elec + penalty;
@@ -294,7 +400,10 @@ export function computeRow(
     prevOldIndex: prevOld ?? 0,
     prevNewIndex: prevNew ?? 0,
     prevKwh: pKwh ?? 0,
-    prevNights: Number(prevRow?.nights) || 0,
+    prevNights: rowNights(prevRow),
+    prevGuestDates: normGuestDates(prevRow?.guest_dates),
+    prevGuestMode: guestModeOf(prevRow),
+    prevGuestPeople: guestPersonNights(prevRow?.guest_dates),
     prevViolations: Number(prevRow?.violations) || 0,
     prevCloseDate: prevRow?.close_date ?? null,
     prevMoveIn: pMi,

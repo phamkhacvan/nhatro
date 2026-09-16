@@ -11,6 +11,8 @@ const FIELD_LABELS: Record<string, string> = {
   move_in: "Ngày vào ở",
   move_out: "Ngày kết thúc HĐ",
   nights: "Số đêm",
+  guest_dates: "Ngày khách đêm",
+  guest_mode: "Loại khách đêm",
   violations: "Vi phạm",
   paid: "Đã đóng",
   tenant: "Người thuê",
@@ -23,9 +25,29 @@ const FIELD_LABELS: Record<string, string> = {
 
 function formatVal(field: string, val: string): string {
   if (!val) return "—";
+  if (field === "guest_mode") {
+    return val === "rieng" ? "khách đêm riêng" : val === "chung" ? "khách đêm chung" : val;
+  }
   if (field === "paid" || field === "deposit") {
     const n = Number(val);
     return isNaN(n) ? val : new Intl.NumberFormat("vi-VN").format(n) + "đ";
+  }
+  if (field === "guest_dates") {
+    try {
+      const arr = JSON.parse(val);
+      if (Array.isArray(arr)) {
+        return arr
+          .map((g) => {
+            const iso = typeof g === "string" ? g : g?.date;
+            const p = String(iso || "").split("-");
+            const d = p.length === 3 ? `${p[2]}/${p[1]}` : iso || "";
+            return `${d}${g?.name ? " " + g.name : ""}${g?.relation ? ` (${g.relation})` : ""}`.trim();
+          })
+          .join(", ");
+      }
+    } catch {
+      /* fallthrough */
+    }
   }
   return val;
 }

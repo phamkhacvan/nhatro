@@ -126,5 +126,7 @@ create table if not exists nhatro_monthly (
   guest int default 0,
   paid numeric default 0
 );
+alter table nhatro_monthly add column if not exists guest_dates jsonb default '[]';
+alter table nhatro_monthly add column if not exists guest_mode text default 'chung';
 create unique index if not exists uq_nhatro_monthly_house on nhatro_monthly (house_id, ky, room);
 create index if not exists idx_nhatro_monthly_house on nhatro_monthly (house_id, ky);
