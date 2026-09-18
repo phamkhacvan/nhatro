@@ -690,9 +690,13 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-slate-200 bg-slate-50 font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200">
-              <td className={cellCls} colSpan={11}>
+              <td className={cellCls} colSpan={8}>
                 TỔNG CỘNG
               </td>
+              <td className={numCls} title="Tổng kWh tiêu thụ các phòng">
+                {formatThousand(String(sum((c) => c.kwh ?? 0)))} kWh
+              </td>
+              <td className={cellCls} colSpan={2}></td>
               <td className={moneyCls}>{fmt(sum((c) => c.rent))}</td>
               <td className={moneyCls}>{fmt(sum((c) => c.water))}</td>
               <td className={moneyCls}>{fmt(sum((c) => c.wifi))}</td>
