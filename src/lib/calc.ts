@@ -10,9 +10,15 @@ export function viToIso(v: string): string | null {
   const t = v.trim();
   const mt = t.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (!mt) return null;
-  const iso = `${mt[3]}-${mt[2]}-${mt[1]}`;
-  const dt = new Date(iso + "T00:00:00");
-  return isNaN(dt.getTime()) ? null : iso;
+  const d = Number(mt[1]);
+  const mm = Number(mt[2]);
+  const y = Number(mt[3]);
+  if (y < 1900 || y > 2100 || mm < 1 || mm > 12 || d < 1 || d > 31) return null;
+  // new Date() bị JavaScript tự roll ngày vô lý (vd 31/02 -> 03/03), nên phải
+  // kiểm tra round-trip để Postgres không nhận '2026-02-31' (date out of range)
+  const dt = new Date(Date.UTC(y, mm - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mm - 1 || dt.getUTCDate() !== d) return null;
+  return `${mt[3]}-${mt[2]}-${mt[1]}`;
 }
 
 export function maskDate(v: string): string {
@@ -106,12 +112,13 @@ export function displayKy(ky: string): string {
 
 export function fmtDateVi(iso: string | null | undefined): string | null {
   if (!iso) return null;
-  const d = new Date(iso + "T00:00:00");
+  const d = new Date(iso + "T00:00:00Z");
   if (Number.isNaN(d.getTime())) return null;
   return d.toLocaleDateString("vi-VN", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
+    timeZone: "Asia/Ho_Chi_Minh",
   });
 }
 
@@ -131,15 +138,16 @@ export function prorate(
     return { amount: full, note: "", days: t, total: t };
   }
   const { m, y } = parseKy(ky);
-  const monthStart = new Date(y, m - 1, 1);
-  const monthEnd = new Date(y, m, 0);
-  const from = moveIn ? new Date(moveIn + "T00:00:00") : monthStart;
-  const to = moveOut ? new Date(moveOut + "T00:00:00") : monthEnd;
+  const monthStart = new Date(Date.UTC(y, m - 1, 1));
+  const monthEnd = new Date(Date.UTC(y, m, 0));
+  const from = moveIn ? new Date(moveIn + "T00:00:00Z") : monthStart;
+  const to = moveOut ? new Date(moveOut + "T00:00:00Z") : monthEnd;
   const s = from < monthStart ? monthStart : from;
   const e = to > monthEnd ? monthEnd : to;
   const total = daysInMonth(ky);
   if (s > e) return { amount: 0, note: "0 ngày", days: 0, total };
   const days = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
+  if (days <= 0) return { amount: 0, note: "0 ngày", days: 0, total };
   if (days >= total) return { amount: full, note: "", days: total, total };
   return { amount: Math.round((full * days) / total), note: `${days}/${total} ngày`, days, total };
 }

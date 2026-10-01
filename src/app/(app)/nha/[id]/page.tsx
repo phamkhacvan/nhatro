@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { sb } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth-server";
-import { activateHouse, dataForKy } from "@/app/actions";
+import { activateHouse, dataForKy, healMonthIntegrity } from "@/app/actions";
 import { House } from "@/lib/types";
 import HouseWorkspace from "@/components/house-workspace";
 
@@ -23,7 +23,15 @@ export default async function HousePage({ params }: { params: Promise<{ id: stri
       .maybeSingle();
     if (!house) notFound();
     await activateHouse(hid);
-    const initialMonth = await dataForKy(house.cur_ky as string);
+    await healMonthIntegrity(hid, (house as House).cur_ky ?? null);
+    const { data: cur } = await sb
+      .from("nhatro_houses")
+      .select("cur_ky")
+      .eq("id", hid)
+      .maybeSingle();
+    const finalKy = (cur?.cur_ky as string | null | undefined) ?? (house as House).cur_ky;
+    if (finalKy) (house as House).cur_ky = finalKy;
+    const initialMonth = await dataForKy(finalKy as string);
     render = { key: hid, house: house as House, initialMonth };
   } catch (err) {
     console.error("house-page-ssr", (err as Error)?.message ?? err);

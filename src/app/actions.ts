@@ -292,11 +292,13 @@ function formatKyNow(): string {
   return `${y}-${m}`;
 }
 
-async function healMonthIntegrity(houseId: number, curKy: string | null): Promise<boolean> {
+export async function healMonthIntegrity(houseId: number, curKy: string | null): Promise<boolean> {
   const real = formatKyNow();
   const prev = prevKy(real);
   let changed = false;
-  if (!curKy || curKy > real) {
+  // Tự cuộn sang tháng thật khi: chưa có tháng, bị set quá xa (tương lai),
+  // hoặc sang tháng mới bình thường (cur_ky đang là tháng liền trước tháng hiện tại)
+  if (!curKy || curKy > real || curKy === prev) {
     await sb.from("nhatro_houses").update({ cur_ky: real }).eq("id", houseId);
     changed = true;
   }
@@ -310,13 +312,13 @@ async function healMonthIntegrity(houseId: number, curKy: string | null): Promis
   const cMap = new Map<string, MonthlyRow>();
   for (const r of (cRows ?? []) as MonthlyRow[]) cMap.set(r.room, r);
   for (const p of (pRows ?? []) as MonthlyRow[]) {
-    if (!p.move_in || p.move_in.slice(0, 7) !== prev) continue;
     const c = cMap.get(p.room);
     if (!c) continue;
     const cOld = c.old_index == null ? null : Number(c.old_index);
     const cNew = c.new_index == null ? null : Number(c.new_index);
     if (p.new_index != null || p.close_date != null) continue;
     if (cNew == null || cNew === 0 || cOld == null || !c.close_date) continue;
+    if (p.move_in && p.move_in.slice(0, 7) > real) continue; // an toàn
     const chot = String(cNew);
     changed = true;
     await Promise.all([
@@ -377,8 +379,11 @@ async function ensureMonth(ky: string, houseId: number): Promise<void> {
     if (have.has(room.room)) continue;
     if (room.move_in && room.move_in.slice(0, 7) > ky) continue;
     const p = prevMap.get(room.room);
-    const old_index = p ? (p.new_index ?? p.old_index) : null;
-    const old_date = p ? (p.close_date ?? null) : null;
+    // Tháng trước đã chốt -> lấy số mới + ngày chốt làm số cũ của tháng này.
+    // Chưa chốt -> mới fallback số cũ tạm (tránh seed số cũ khi đã có số mới).
+    const prevClosed = !!(p && p.new_index != null && p.close_date != null);
+    const old_index = prevClosed ? p!.new_index : (p?.old_index ?? null);
+    const old_date = prevClosed ? p!.close_date : (p?.old_date ?? null);
     rows.push({
       house_id: houseId,
       ky,
@@ -509,12 +514,9 @@ export async function saveMonth(ky: string, rows: MonthlyRow[]) {
     if (u.new_index == null || u.close_date == null) continue;
     const next = nextMap.get(u.room);
     if (!next) continue;
-    const oldNew = existMap.get(u.room)?.new_index ?? null;
-    const seedIsAuto =
-      next.old_index == null ||           // chưa có -> điền tự động
-      next.old_index === oldNew ||        // seed cũ từ lần đóng trước -> cập nhật theo số mới
-      next.old_index === u.new_index;     // đã đúng -> bỏ qua (không cập nhật lại)
-    if (!seedIsAuto) continue;            // user đã sửa tay tháng sau -> không đè
+    // Tháng sau lấy "Số điện cũ" = số mới vừa chốt của tháng này + ngày chốt.
+    // Trước đây điều kiện seedIsAuto quá chặt (so với new_index cũ trong DB) nên
+    // row tháng sau tạo sớm (lúc chưa chốt tháng này) bị giữ số cũ tạm — làm sai.
     await sb
       .from("nhatro_monthly")
       .update({ old_index: u.new_index, old_date: u.close_date })
@@ -876,7 +878,10 @@ export async function deleteRoom(room: string): Promise<{ ok: boolean; error?: s
     .maybeSingle();
   if (!r) return { ok: true };
   if ((Number(r.occupancy) || 0) > 0) {
-    return { ok: false, error: `Phòng ${room} đang có người ở (${r.occupancy} người), không xoá được.` };
+    return {
+      ok: false,
+      error: `Phòng ${room} đang có người ở (${r.occupancy} người), không xoá được. Bạn hãy cập nhật "Số người" của phòng về 0 rồi Lưu, sau đó mới xoá phòng.`,
+    };
   }
   const { data: paidRows } = await sb
     .from("nhatro_monthly")
@@ -1078,7 +1083,8 @@ export async function dataForKy(ky: string) {
   if (missing.length > 0 && ky <= realNow) {
     const inserts = missing.map((room) => {
       const p = prevMap.get(room.room);
-const old_index = p ? (p.new_index ?? p.old_index) : null;
+      const prevClosed = !!(p && p.new_index != null && p.close_date != null);
+      const old_index = prevClosed ? p!.new_index : (p?.old_index ?? null);
       return {
         house_id: house.id,
         ky,
@@ -1087,7 +1093,7 @@ const old_index = p ? (p.new_index ?? p.old_index) : null;
         phone: room.phone,
         occupancy: Number(room.occupancy) || 0,
         old_index,
-        old_date: p ? (p.close_date ?? null) : null,
+        old_date: prevClosed ? p!.close_date : (p?.old_date ?? null),
         new_index: null,
         close_date: null,
         move_in: room.move_in && room.move_in.slice(0, 7) === ky ? room.move_in : null,
@@ -1172,15 +1178,19 @@ export async function listHouses() {
 
 export async function bangTinhKy() {
   const house = await getActiveHouse();
-  return house.cur_ky;
+  if (house.id != null) await healMonthIntegrity(house.id, house.cur_ky ?? null);
+  const h = await getActiveHouse();
+  return h.cur_ky;
 }
 
 export async function dashboardData() {
   const user = await getCurrentUser();
-  const houseList = user ? await myHouseList() : ([] as House[]);
+  let houseList = user ? await myHouseList() : ([] as House[]);
   for (const h of houseList) {
     if (h.id != null) await healMonthIntegrity(h.id, h.cur_ky ?? null);
   }
+  // Đọc lại sau heal để cur_ky của dashboard theo tháng hiện tại (vd sang tháng mới)
+  houseList = user ? await myHouseList() : ([] as House[]);
   if (houseList.length === 0) return { active: 0, houses: [], totalCumRevenue: 0, totalCumPaid: 0 };
   const ids = houseList.map((h) => h.id);
   const [{ data: prices }, { data: rooms }, { data: monthly }] = await Promise.all([
@@ -1427,7 +1437,7 @@ function buildPhieuHtml(house: House, c: ComputedRow, ky: string, baseUrl: strin
     <table style="width:100%;border-collapse:collapse;font-size:14px;margin:16px 0">${info}</table>
     <table style="width:100%;border-collapse:collapse;font-size:14px">${rows}
       <tr style="background:#ffedd5;font-weight:700"><td style="border:1px solid #e2e8f0;padding:8px 12px">TỔNG CỘNG</td><td style="border:1px solid #e2e8f0;padding:8px 12px;text-align:right;white-space:nowrap">${fmt(c.total)}</td></tr>
-      <tr><td style="border:1px solid #e2e8f0;padding:8px 12px">Đã đóng</td><td style="border:1px solid #e2e8f0;padding:8px 12px;text-align:right;white-space:nowrap">${fmt(c.paid)}</td></tr>
+      <tr><td style="border:1px solid #e2e8f0;padding:8px 12px">Đã thu</td><td style="border:1px solid #e2e8f0;padding:8px 12px;text-align:right;white-space:nowrap">${fmt(c.paid)}</td></tr>
       <tr><td style="border:1px solid #e2e8f0;padding:8px 12px">Còn lại</td><td style="border:1px solid #e2e8f0;padding:8px 12px;text-align:right;white-space:nowrap;font-weight:600">${fmt(c.remain)}</td></tr>
     </table>
     ${exParts.length > 0 ? `<p style="font-size:12px;color:#15803d;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:8px 10px;margin:10px 0 4px">🎁 Ưu đãi: ${exParts.map((p) => exemptLabel(p)).join(", ")} được miễn phí${c.exempt_from ? ` từ tháng ${displayKy(c.exempt_from)}` : ""}${c.exempt_until ? ` đến tháng ${displayKy(c.exempt_until)}` : ""}</p>` : ""}
@@ -1464,7 +1474,7 @@ function buildConfirmHtml(
       <table style="width:100%;border-collapse:collapse;font-size:14px;margin:0 0 4px">
         <tr><td style="padding:6px 0;color:#64748b">Tổng tiền phải đóng</td><td style="padding:6px 0;text-align:right;font-weight:600">${fmt(c.total)}</td></tr>
         <tr style="background:#f0fdf4"><td style="padding:7px 10px;border-radius:6px;color:#16a34a;font-weight:700">+ Số tiền nhận lần này</td><td style="padding:7px 10px;border-radius:6px;text-align:right;font-weight:700;color:#16a34a">${fmt(receive)}</td></tr>
-        <tr><td style="padding:6px 0;color:#64748b">Đã đóng trước đó</td><td style="padding:6px 0;text-align:right">${fmt(paid)}</td></tr>
+        <tr><td style="padding:6px 0;color:#64748b">Đã thu trước đó</td><td style="padding:6px 0;text-align:right">${fmt(paid)}</td></tr>
         <tr><td style="padding:6px 0;color:#64748b">Tổng đã đóng</td><td style="padding:6px 0;text-align:right;font-weight:700">${fmt(newPaid)}</td></tr>
         <tr><td style="padding:6px 0;color:#64748b">Còn thiếu</td><td style="padding:6px 0;text-align:right;font-weight:800;color:${due ? "#dc2626" : "#16a34a"};font-size:16px">${fmt(newRemain)}</td></tr>
       </table>
