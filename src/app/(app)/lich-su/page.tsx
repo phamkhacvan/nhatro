@@ -14,7 +14,7 @@ const FIELD_LABELS: Record<string, string> = {
   guest_dates: "Ngày khách đêm",
   guest_mode: "Loại khách đêm",
   violations: "Vi phạm",
-  paid: "Đã đóng",
+  paid: "Đã thu",
   tenant: "Người thuê",
   phone: "SĐT",
   occupancy: "Số người",
@@ -117,7 +117,7 @@ export default async function LichSuPage({ searchParams }: { searchParams: Promi
           {Object.entries(grouped).map(([date, entries]) => (
             <div key={date}>
               <h2 className="mb-2 text-sm font-bold text-slate-600 dark:text-slate-400">{date}</h2>
-              <div className="overflow-hidden rounded-xl bg-white shadow dark:bg-slate-900">
+              <div className="overflow-hidden rounded-xl bg-surface shadow dark:bg-slate-900">
                 {entries.map((e, i) => {
                   const time = new Date(e.created_at).toLocaleTimeString("vi-VN", {
                     hour: "2-digit",

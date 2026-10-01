@@ -231,7 +231,7 @@ export default function RoomsManager({
   }
 
   return (
-    <div className="rounded-2xl bg-white p-6 shadow dark:bg-slate-900">
+    <div className="rounded-2xl bg-surface p-6 shadow dark:bg-slate-900">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="font-bold text-blue-900 dark:text-indigo-300">Danh sách phòng & người thuê</h2>
         <div className="flex gap-2">

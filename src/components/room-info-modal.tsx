@@ -53,6 +53,13 @@ export default function RoomInfoModal({ room, onClose }: { room: string; onClose
   const dirty = draft !== null && draft !== "loading" && savedSnap !== null && savedSnap !== draftKey(draft);
 
   useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, []);
+
+  useEffect(() => {
     let live = true;
     const startedAt = Date.now();
     const MIN_MS = 400;
@@ -189,7 +196,7 @@ const apply = () => {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       onClick={onClose}
     >
-      <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
+      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-start justify-between">
           <div>
             <h3 className="font-bold text-slate-900 dark:text-slate-100">Thông tin phòng {room}</h3>

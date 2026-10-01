@@ -50,7 +50,7 @@ async function Nav() {
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-[#0b1220]">
+    <div className="min-h-screen bg-[#e7edf4] dark:bg-[#0b1220]">
       <Nav />
       <main className="mx-auto w-full max-w-[1900px] px-4 py-6">{children}</main>
       <Toaster />

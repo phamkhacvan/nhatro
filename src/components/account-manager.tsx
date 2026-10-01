@@ -53,7 +53,7 @@ export default function AccountManager({
 
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60">
+      <section className="rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60">
         <h3 className="mb-1 text-sm font-bold text-slate-900 dark:text-slate-100">Tài khoản của bạn</h3>
         <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
           {me.name || me.email} <span className="text-slate-400">· {me.email}</span>
@@ -92,7 +92,7 @@ export default function AccountManager({
       </section>
 
       {me.is_admin && (
-        <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60">
+        <section className="rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Tài khoản người dùng</h3>
             <button

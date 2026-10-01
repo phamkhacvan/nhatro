@@ -191,6 +191,14 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
   }, []);
 
   useEffect(() => {
+    const open = Boolean(pen) || Boolean(roomModal);
+    document.body.style.overflow = open ? "hidden" : "";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [pen, roomModal]);
+
+  useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       if (!dirtyRef.current) return;
       e.preventDefault();
@@ -308,16 +316,25 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
 
   function save(next?: Draft[]): Promise<boolean> {
     const data = next ?? editing;
-    const bad = data.find(
-      (d) =>
-        (d.old_date !== "" && !viToIso(d.old_date)) ||
-        (d.close_date !== "" && !viToIso(d.close_date)) ||
-        (d.move_in !== "" && !viToIso(d.move_in)) ||
-        (d.move_out !== "" && !viToIso(d.move_out))
-    );
-    if (bad) {
-      showToast("error", `Ngày ở phòng ${bad.room} chưa đúng định dạng dd/mm/yyyy.`);
-      return Promise.resolve(false);
+    const dateFields: [keyof Draft, string][] = [
+      ["old_date", "Ngày chốt số cũ"],
+      ["close_date", "Ngày chốt số mới"],
+      ["move_in", "Ở từ ngày"],
+      ["move_out", "Ở đến ngày"],
+    ];
+    for (const d of data) {
+      for (const [key, label] of dateFields) {
+        const v = d[key] as string;
+        if (v === "") continue;
+        if (!/^\d{2}\/\d{2}\/\d{4}$/.test(v)) {
+          showToast("error", `Phòng ${d.room}: ${label} "${v}" sai định dạng. Nhập dd/mm/yyyy (vd 01/10/2026).`);
+          return Promise.resolve(false);
+        }
+        if (!viToIso(v)) {
+          showToast("error", `Phòng ${d.room}: ${label} "${v}" không tồn tại trong lịch (vd 31/09). Vui lòng nhập lại.`);
+          return Promise.resolve(false);
+        }
+      }
     }
     return new Promise((resolve) => {
       let done = false;
@@ -384,7 +401,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
   );
 
   const statCardCls =
-    "rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60";
+    "rounded-2xl bg-surface p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60";
 
   return (
     <div>
@@ -394,7 +411,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
           <p className="mt-1 text-xl font-bold tabular-nums text-slate-900 dark:text-slate-100">{fmt(sum((c) => c.total))}</p>
         </div>
         <div className={statCardCls}>
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">Đã đóng</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">Đã thu</p>
           <p className="mt-1 text-xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{fmt(sum((c) => c.paid))}</p>
         </div>
         <div className={statCardCls}>
@@ -447,7 +464,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
         </button>
       </div>
 
-      <div className="hidden overflow-x-auto rounded-2xl bg-white pb-4 shadow-sm ring-1 ring-slate-200/60 lg:block dark:bg-slate-900 dark:ring-slate-700/60">
+      <div className="hidden overflow-x-auto rounded-2xl bg-surface pb-4 shadow-sm ring-1 ring-slate-200/60 lg:block dark:bg-slate-900 dark:ring-slate-700/60">
         <table className="w-full min-w-[1400px] border-collapse text-sm">
           <thead>
             <tr className="bg-slate-100 text-xs font-bold uppercase tracking-wide text-slate-700 dark:bg-slate-800 dark:text-slate-300">
@@ -473,7 +490,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                 In phiếu
               </th>
             </tr>
-            <tr className="border-b-2 border-slate-300 bg-white text-xs font-bold uppercase tracking-wide text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
+            <tr className="border-b-2 border-slate-300 bg-surface text-xs font-bold uppercase tracking-wide text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
               {thSort("tenant", "Người thuê")}
               {thSort("phone", "SĐT")}
               {thSort("occupancy", "Số người", cellCls + " text-center")}
@@ -490,7 +507,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
               {thSort("elec", <>Điện (tháng {prevM})</>, moneyCls)}
               {thSort("penalty", <>Phụ phí (tháng {prevM})</>, moneyCls)}
               {thSort("total", "Tổng", moneyCls)}
-              {thSort("paid", "Đã đóng", moneyCls)}
+              {thSort("paid", "Đã thu", moneyCls)}
               {thSort("remain", "Còn lại", moneyCls)}
             </tr>
           </thead>
@@ -503,7 +520,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
               </tr>
             )}
             {items.map(({ d, i, c }) => {
-              const rowBg = i % 2 ? "bg-slate-50/60 dark:bg-slate-800/40" : "bg-white dark:bg-slate-900";
+              const rowBg = i % 2 ? "bg-[#f1f4f9]/70 dark:bg-slate-800/40" : "bg-surface dark:bg-slate-900";
               return (
                 <tr key={c.room} className={rowBg + " transition hover:bg-indigo-50/50 dark:hover:bg-indigo-500/10"}>
                   <td className={cellCls + " sticky left-0 z-10 bg-inherit text-center"}>
@@ -659,7 +676,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                       value={d.paid}
                       onChange={(e) => set(d, "paid", formatThousand(e.target.value))}
                       className={inputCls}
-                      placeholder="đã đóng"
+                      placeholder="đã thu"
                     />
                   </td>
                   <td className={moneyCls + " font-bold " + (c.remain > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400")}>
@@ -689,7 +706,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
             })}
           </tbody>
           <tfoot>
-            <tr className="border-t-2 border-slate-200 bg-slate-50 font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200">
+            <tr className="border-t-2 border-slate-200 bg-[#eef3f9] font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200">
               <td className={cellCls} colSpan={8}>
                 TỔNG CỘNG
               </td>
@@ -725,7 +742,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
         {items.map(({ d, i, c }) => (
           <div
             key={d.room}
-            className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60"
+            className="rounded-2xl bg-surface p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60"
           >
             <div className="flex items-center gap-2">
               <span className="text-base font-bold text-slate-900 dark:text-slate-100">Phòng {c.room}</span>
@@ -833,7 +850,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                 />
               </div>
               <div>
-                <label className={labelCls}>Đã đóng</label>
+                <label className={labelCls}>Đã thu</label>
                 <input
                   type="text"
                   inputMode="numeric"
@@ -927,7 +944,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
               onClick={() => setPen(null)}
             >
               <div
-                className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900"
+                className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900"
                 onClick={(e) => e.stopPropagation()}
               >
                 <h3 className="mb-1 font-bold text-slate-900 dark:text-slate-100">

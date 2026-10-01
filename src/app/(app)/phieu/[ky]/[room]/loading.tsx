@@ -4,7 +4,7 @@ export default function Loading() {
   return (
     <div className="mx-auto max-w-xl">
       <Skeleton className="mb-4 h-10 w-full rounded-2xl" />
-      <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900">
+      <div className="overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900">
         <div className="flex flex-col items-center gap-2 bg-indigo-600/90 px-8 py-6">
           <Skeleton className="h-5 w-48 bg-white/40" />
           <Skeleton className="h-3 w-28 bg-white/40" />

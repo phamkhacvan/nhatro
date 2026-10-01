@@ -124,7 +124,7 @@ function HouseCard({ h, active, idx }: { h: HouseData; active: number; idx: numb
   return (
     <Link
       href={`/nha/${h.id}`}
-      className="group relative flex flex-col overflow-hidden rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200/60 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:ring-indigo-200 dark:bg-slate-900 dark:ring-slate-700/60 dark:hover:ring-indigo-500/40"
+      className="group relative flex flex-col overflow-hidden rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-slate-200/60 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:ring-indigo-200 dark:bg-slate-900 dark:ring-slate-700/60 dark:hover:ring-indigo-500/40"
     >
       <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${grad} opacity-70`} />
       <div className="flex items-start justify-between gap-3">
@@ -267,7 +267,7 @@ export default function HomeTabs({ active, houses, totalCumRevenue = 0, totalCum
         {showForm && (
           <form
             action={formAction}
-            className="mb-6 flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-indigo-200/60 sm:flex-row sm:flex-wrap dark:bg-slate-900 dark:ring-indigo-500/30"
+            className="mb-6 flex flex-col gap-3 rounded-2xl bg-surface p-4 shadow-sm ring-1 ring-indigo-200/60 sm:flex-row sm:flex-wrap dark:bg-slate-900 dark:ring-indigo-500/30"
           >
             <input
               name="name"
@@ -294,7 +294,7 @@ export default function HomeTabs({ active, houses, totalCumRevenue = 0, totalCum
         )}
 
         {filtered.length === 0 ? (
-          <div className="rounded-2xl bg-white py-16 text-center shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60">
+          <div className="rounded-2xl bg-surface py-16 text-center shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60">
             <p className="text-4xl">🏠</p>
             <p className="mt-3 font-semibold text-slate-700 dark:text-slate-300">
               {houses.length === 0 ? "Chưa có nhà trọ nào" : "Không tìm thấy nhà nào"}

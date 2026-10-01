@@ -112,7 +112,7 @@ export default function SettingsForm({
   }
 
   return (
-    <form onSubmit={save} className="grid max-w-3xl gap-4 rounded-2xl bg-white p-6 shadow dark:bg-slate-900">
+    <form onSubmit={save} className="grid max-w-3xl gap-4 rounded-2xl bg-surface p-6 shadow dark:bg-slate-900">
       <div>
         <label className={label}>Tên nhà trọ</label>
         <input className={input} value={s.name} onChange={(e) => setS({ ...s, name: e.target.value })} />

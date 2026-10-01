@@ -18,7 +18,7 @@ export function SkeletonStatGrid({ n = 4, className = "" }: { n?: number; classN
 
 export function SkeletonTable({ rows = 10, className = "" }: { rows?: number; className?: string }) {
   return (
-    <div className={`space-y-2.5 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60 ${className}`}>
+    <div className={`space-y-2.5 rounded-2xl bg-surface p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60 ${className}`}>
       <Skeleton className="h-11 w-full rounded-xl" />
       {Array.from({ length: rows }).map((_, r) => {
         const w1 = 22 + ((r * 13) % 40);

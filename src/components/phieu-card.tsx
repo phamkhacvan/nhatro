@@ -122,7 +122,7 @@ export default function PhieuCard({
                 </td>
               </tr>
               <tr className="border-b border-slate-100">
-                <td className="px-2 py-1.5 text-slate-500 sm:px-3 sm:py-2">Đã đóng</td>
+                <td className="px-2 py-1.5 text-slate-500 sm:px-3 sm:py-2">Đã thu</td>
                 <td className="px-2 py-1.5 text-right tabular-nums text-slate-700 sm:px-3 sm:py-2">{fmt(c.paid)}</td>
               </tr>
               <tr>

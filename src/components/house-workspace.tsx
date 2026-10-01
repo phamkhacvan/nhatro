@@ -22,7 +22,7 @@ function TableSkeleton({ rows = 4 }: { rows?: number }) {
           <div key={i} className="h-[76px] animate-pulse rounded-2xl bg-slate-200/70 dark:bg-slate-800"></div>
         ))}
       </div>
-      <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60">
+      <div className="rounded-2xl bg-surface p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60">
         <div className="mb-3 h-6 w-56 animate-pulse rounded-lg bg-slate-200/70 dark:bg-slate-800"></div>
         <div className="space-y-2.5">
           {Array.from({ length: rows }).map((_, i) => (
@@ -37,7 +37,7 @@ function TableSkeleton({ rows = 4 }: { rows?: number }) {
 function RowsSkeleton() {
   return (
     <div
-      className="space-y-2 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60"
+      className="space-y-2 rounded-2xl bg-surface p-4 shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60"
       aria-hidden
     >
       {Array.from({ length: 5 }).map((_, i) => (
@@ -102,7 +102,7 @@ const FIELD_LABELS: Record<string, string> = {
   guest_dates: "Ngày khách đêm",
   guest_mode: "Loại khách đêm",
   violations: "Vi phạm",
-  paid: "Đã đóng",
+  paid: "Đã thu",
   tenant: "Người thuê",
   phone: "SĐT",
   occupancy: "Số người",
@@ -161,7 +161,7 @@ function AuditLogView({ logs, page }: { logs: AuditLog[]; page: number }) {
     : logs;
 
   return (
-    <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60">
+    <div className="overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-slate-200/60 dark:bg-slate-900 dark:ring-slate-700/60">
       <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-2 dark:border-slate-700">
         <svg className="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
         <input
