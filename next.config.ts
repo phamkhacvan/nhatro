@@ -14,6 +14,11 @@ const CSP = [
 ].join("; ");
 
 const nextConfig: NextConfig = {
+  productionBrowserSourceMaps: false,
+  images: {
+    formats: ["image/webp", "image/avif"],
+    minimumCacheTTL: 31536000,
+  },
   experimental: {
     serverActions: {
       bodySizeLimit: "5mb",
