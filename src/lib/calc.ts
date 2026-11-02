@@ -342,8 +342,30 @@ export function exemptParts(row: MonthlyRow): ("water" | "wifi" | "elec" | "pena
   return out;
 }
 
+// Nhãn khoản miễn phí trong ghi chú ưu đãi cuối phiếu.
+// Khớp với tên dòng trong bảng phiếu ("Tiền wifi + rác", "Tiền điện"...).
 export function exemptLabel(part: "water" | "wifi" | "elec" | "penalty"): string {
-  return part === "water" ? "nước" : part === "wifi" ? "wifi + rác" : part === "elec" ? "điện" : "phụ phí";
+  return part === "water"
+    ? "Tiền nước"
+    : part === "wifi"
+      ? "Tiền wifi + rác"
+      : part === "elec"
+        ? "Tiền điện"
+        : "Tiền phụ phí";
+}
+
+// Ghi chú ưu đãi tổng hợp cuối phiếu (dùng chung cho web + HTML export).
+// Tháng đầu/cuối lấy động từ exempt_from/exempt_until.
+export function exemptSummary(row: {
+  exempted?: ("water" | "wifi" | "elec" | "penalty")[];
+  exempt_from?: string | null;
+  exempt_until?: string | null;
+}): string | null {
+  const parts = row.exempted ?? [];
+  if (parts.length === 0) return null;
+  const from = row.exempt_from ? ` từ tháng ${displayKy(row.exempt_from)}` : "";
+  const until = row.exempt_until ? ` đến tháng ${displayKy(row.exempt_until)}` : "";
+  return `🎁 Ưu đãi: ${parts.map(exemptLabel).join(", ")} được miễn phí${from}${until}`;
 }
 
 export function computeRow(
@@ -390,6 +412,11 @@ export function computeRow(
   const penalty = noPenalty ? 0 : penaltyBase + guestFee;
   const total = rent + water + wifi + elec + penalty;
   const paid = Number(row.paid) || 0;
+  // Phụ phí của chính tháng này: hiển thị/nhập ở bảng tính, chưa vào tổng tháng này,
+  // sẽ được thu trên phiếu tháng sau (cùng logic với nước/wifi/điện của tháng trước).
+  const penaltyNow =
+    guestNightMoney(row.guest_dates, guestModeOf(row), Number(row.violations) || 0) +
+    (Number(row.guest) > 0 ? 500000 : 0);
   return {
     ...row,
     kwh,
@@ -399,6 +426,7 @@ export function computeRow(
     wifi,
     elec,
     penalty,
+    penaltyNow,
     guestFee,
     hasGuest: guest,
     exempted,

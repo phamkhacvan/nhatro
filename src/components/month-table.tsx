@@ -2,9 +2,10 @@
 
 import { ReactNode, useState, useEffect, useRef, useCallback } from "react";
 import { House, MonthlyRow, GuestNight } from "@/lib/types";
-import { computeRow, fmt, displayKy, guestNightMoney, guestModeOf, nextKy, prevKy, prorate, parseKy, isoToVi, viToIso, maskDate, formatThousand, parseThousand, daysInMonth, guestNights, guestSummary, guestChipLabel, normGuestDates, rowNights } from "@/lib/calc";
+import { computeRow, fmt, displayKy, guestNightMoney, guestModeOf, guestNightRows, nextKy, prevKy, prorate, parseKy, isoToVi, viToIso, formatThousand, parseThousand, daysInMonth, guestSummary, guestChipLabel, normGuestDates, rowNights } from "@/lib/calc";
 import { saveMonth } from "@/app/actions";
 import { showToast } from "@/components/toast";
+import DatePicker from "@/components/date-picker";
 import RoomInfoModal from "@/components/room-info-modal";
 import MonthSelector from "@/components/month-selector";
 import { setDirty, useDirty } from "@/lib/dirty";
@@ -98,17 +99,11 @@ function toRow(ky: string, d: Draft): MonthlyRow {
   };
 }
 
-// Số đêm khách từ danh sách ngày (ưu tiên); row cũ chưa có danh sách thì fallback theo nights nhập tay
-function dNights(d: Draft): number {
-  const g = guestNights(d.guest_dates);
-  return g > 0 ? g : Number(d.nights) || 0;
-}
-
 type SortKey =
   | "room" | "tenant" | "phone" | "occupancy"
   | "old_index" | "old_date" | "new_index" | "close_date" | "kwh"
   | "move_in" | "move_out"
-  | "rent" | "water" | "wifi" | "elec" | "penalty"
+  | "rent" | "water" | "wifi" | "elec" | "penalty" | "penaltyNow"
   | "total" | "paid" | "remain";
 
 type Props = {
@@ -131,6 +126,8 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
     setEditing(rows.map(toDraft));
   }
   const [pen, setPen] = useState<{ i: number; picker: string; name: string; rel: string; dates: GuestNight[]; violations: string; guest: boolean; mode: "chung" | "rieng" } | null>(null);
+  // xem (không sửa) phụ phí của tháng trước — số tiền đã in trên phiếu tháng này
+  const [penView, setPenView] = useState<number | null>(null);
   const [roomModal, setRoomModal] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" } | null>(null);
@@ -191,12 +188,12 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
   }, []);
 
   useEffect(() => {
-    const open = Boolean(pen) || Boolean(roomModal);
+    const open = Boolean(pen) || Boolean(roomModal) || penView !== null;
     document.body.style.overflow = open ? "hidden" : "";
     return () => {
       document.body.style.overflow = "";
     };
-  }, [pen, roomModal]);
+  }, [pen, roomModal, penView]);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -262,6 +259,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
       wifi: (it) => it.c.wifi,
       elec: (it) => it.c.elec,
       penalty: (it) => it.c.penalty,
+      penaltyNow: (it) => it.c.penaltyNow,
       total: (it) => it.c.total,
       paid: (it) => Number(it.d.paid) || 0,
       remain: (it) => it.c.remain,
@@ -506,6 +504,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
               {thSort("wifi", <>Wifi+Rác (tháng {prevM})</>, moneyCls)}
               {thSort("elec", <>Điện (tháng {prevM})</>, moneyCls)}
               {thSort("penalty", <>Phụ phí (tháng {prevM})</>, moneyCls)}
+              {thSort("penaltyNow", <>Phụ phí (tháng {m})</>, moneyCls)}
               {thSort("total", "Tổng", moneyCls)}
               {thSort("paid", "Đã thu", moneyCls)}
               {thSort("remain", "Còn lại", moneyCls)}
@@ -514,7 +513,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
           <tbody>
             {items.length === 0 && (
               <tr>
-                <td colSpan={20} className="px-4 py-8 text-center text-sm text-slate-400">
+                <td colSpan={21} className="px-4 py-8 text-center text-sm text-slate-400">
                   Không có phòng nào khớp tìm kiếm.
                 </td>
               </tr>
@@ -557,14 +556,11 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                     />
                   </td>
                   <td className={cellCls}>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={10}
+                    <DatePicker
                       value={d.old_date}
-                      onChange={(e) => set(d, "old_date", maskDate(e.target.value))}
+                      onChange={(v) => set(d, "old_date", v)}
                       className={dateCls}
-                      placeholder="dd/mm/yyyy"
+                      ariaLabel={`Ngày chốt số điện cũ phòng ${d.room}`}
                       title="Ngày chốt số điện cũ (ngày ghi nhận chỉ số đứng trước)"
                     />
                   </td>
@@ -578,37 +574,28 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                     />
                   </td>
                   <td className={cellCls}>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={10}
+                    <DatePicker
                       value={d.close_date}
-                      onChange={(e) => set(d, "close_date", maskDate(e.target.value))}
+                      onChange={(v) => set(d, "close_date", v)}
                       className={dateCls}
-                      placeholder="dd/mm/yyyy"
+                      ariaLabel={`Ngày chốt số điện mới phòng ${d.room}`}
                     />
                   </td>
                   <td className={numCls + " font-bold dark:text-slate-100"}>{c.kwh || ""}</td>
                   <td className={cellCls}>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={10}
+                    <DatePicker
                       value={d.move_in}
-                      onChange={(e) => set(d, "move_in", maskDate(e.target.value))}
+                      onChange={(v) => set(d, "move_in", v)}
                       className={dateCls}
-                      placeholder="dd/mm/yyyy"
+                      ariaLabel={`Ngày vào ở phòng ${d.room}`}
                     />
                   </td>
                   <td className={cellCls}>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      maxLength={10}
+                    <DatePicker
                       value={d.move_out}
-                      onChange={(e) => set(d, "move_out", maskDate(e.target.value))}
+                      onChange={(v) => set(d, "move_out", v)}
                       className={dateCls}
-                      placeholder="dd/mm/yyyy"
+                      ariaLabel={`Ngày trả phòng ${d.room}`}
                     />
                   </td>
                   <td className={moneyCls + " dark:text-slate-300"}>
@@ -641,29 +628,24 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                       </>
                     ) : (
                       <button
-                        onClick={() => openPen(i)}
-                        title="Nhập phụ phí (khách đêm / vi phạm)"
-                        className="font-medium text-indigo-700 underline decoration-dotted underline-offset-2 transition hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300"
+                        onClick={() => setPenView(i)}
+                        title={`Xem chi tiết phụ phí tháng ${prevM} (đã thu trên phiếu tháng ${m})`}
+                        className="font-medium text-slate-700 underline decoration-dotted underline-offset-2 transition hover:text-indigo-700 dark:text-slate-300 dark:hover:text-indigo-400"
                       >
                         {fmt(c.penalty)}
                       </button>
                     )}
-                    {c.penalty > 0 && (
-                      <div className="text-xs font-normal text-slate-400">
-                        {c.prevNights > 0 || c.prevViolations > 0 || c.hasGuest ? (
-                          `khách đêm: ${c.prevGuestDates.length ? `${guestSummary(c.prevGuestDates)} (${c.prevNights} đêm)` : c.prevNights}, khách ở trên 5 ngày: ${c.hasGuest ? 1 : 0}, vi phạm: ${c.prevViolations}`
-                        ) : null}
-                      </div>
-                    )}
-                    {(dNights(d) > 0 || Number(d.violations) > 0) && (
-                      <div className="text-xs font-normal text-indigo-500 dark:text-indigo-400">
-                        → thu tháng {nextM}: khách đêm {d.guest_mode === "rieng" ? `${d.guest_dates.length} lượt người-đêm (${dNights(d)} đêm) · 200.000đ/người/đêm` : `${dNights(d)} đêm`}{d.guest_dates.length ? ` (${guestSummary(d.guest_dates)})` : ""} · vi phạm {d.violations} = {fmt(guestNightMoney(d.guest_dates, d.guest_mode, Number(d.violations) || 0))}
-                      </div>
-                    )}
-                    {d.guest && (
-                      <div className="text-xs font-normal text-indigo-500 dark:text-indigo-400">
-                        → thu tháng {nextM}: khách qua ở + 500k
-                      </div>
+                  </td>
+                  <td className={moneyCls}>
+                    <button
+                      onClick={() => openPen(i)}
+                      title={`Nhập phụ phí tháng ${m} (khách đêm / vi phạm / khách qua ở) — sẽ thu trên phiếu tháng ${nextM}`}
+                      className="font-medium text-indigo-700 underline decoration-dotted underline-offset-2 transition hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300"
+                    >
+                      {fmt(c.penaltyNow)}
+                    </button>
+                    {c.penaltyNow > 0 && (
+                      <div className="text-[10px] font-normal text-slate-400">→ thu tháng {nextM}</div>
                     )}
                   </td>
                   <td className={moneyCls + " font-bold text-slate-900 dark:text-slate-100"}>
@@ -719,6 +701,9 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
               <td className={moneyCls}>{fmt(sum((c) => c.wifi))}</td>
               <td className={moneyCls}>{fmt(sum((c) => c.elec))}</td>
               <td className={moneyCls}>{fmt(sum((c) => c.penalty))}</td>
+              <td className={moneyCls} title={`Tổng phụ phí ghi nhận trong tháng ${m} (thu trên phiếu tháng ${nextM})`}>
+                {fmt(sum((c) => c.penaltyNow))}
+              </td>
               <td className={moneyCls + " text-slate-900 dark:text-slate-100"}>{fmt(sum((c) => c.total))}</td>
               <td className={moneyCls}>{fmt(sum((c) => c.paid))}</td>
               <td className={moneyCls + (sum((c) => c.remain) > 0 ? " text-red-600 dark:text-red-400" : " text-emerald-600 dark:text-emerald-400")}>
@@ -727,7 +712,7 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
               <td className={cellCls}></td>
             </tr>
             <tr className="h-6 bg-white dark:bg-slate-900">
-              <td className="border-0" colSpan={20}></td>
+              <td className="border-0" colSpan={21}></td>
             </tr>
           </tfoot>
         </table>
@@ -793,14 +778,11 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
               </div>
               <div>
                 <label className={labelCls}>Ngày chốt số cũ</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={10}
+                <DatePicker
                   value={d.old_date}
-                  onChange={(e) => set(d, "old_date", maskDate(e.target.value))}
+                  onChange={(v) => set(d, "old_date", v)}
                   className={dateCls + " w-full"}
-                  placeholder="dd/mm/yyyy"
+                  ariaLabel="Ngày chốt số cũ"
                 />
               </div>
               <div>
@@ -815,38 +797,29 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
               </div>
               <div>
                 <label className={labelCls}>Ngày chốt số mới</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={10}
+                <DatePicker
                   value={d.close_date}
-                  onChange={(e) => set(d, "close_date", maskDate(e.target.value))}
+                  onChange={(v) => set(d, "close_date", v)}
                   className={dateCls + " w-full"}
-                  placeholder="dd/mm/yyyy"
+                  ariaLabel="Ngày chốt số mới"
                 />
               </div>
               <div>
                 <label className={labelCls}>Ở từ ngày</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={10}
+                <DatePicker
                   value={d.move_in}
-                  onChange={(e) => set(d, "move_in", maskDate(e.target.value))}
+                  onChange={(v) => set(d, "move_in", v)}
                   className={dateCls + " w-full"}
-                  placeholder="dd/mm/yyyy"
+                  ariaLabel="Ở từ ngày"
                 />
               </div>
               <div>
                 <label className={labelCls}>Ở đến ngày</label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={10}
+                <DatePicker
                   value={d.move_out}
-                  onChange={(e) => set(d, "move_out", maskDate(e.target.value))}
+                  onChange={(v) => set(d, "move_out", v)}
                   className={dateCls + " w-full"}
-                  placeholder="dd/mm/yyyy"
+                  ariaLabel="Ở đến ngày"
                 />
               </div>
               <div>
@@ -861,27 +834,16 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                 />
               </div>
               <div>
-                <label className={labelCls}>Phụ phí (khách đêm/vi phạm)</label>
+                <label className={labelCls}>Phụ phí (tháng {m})</label>
                 <button
                   onClick={() => openPen(i)}
+                  title={`Khách đêm / vi phạm / khách qua ở của tháng ${m} — sẽ thu trên phiếu tháng ${nextM}`}
                   className="w-full rounded-md border border-dashed border-indigo-300 px-2 py-1 text-left text-sm font-medium text-indigo-700 transition hover:bg-indigo-50 dark:border-indigo-500/40 dark:text-indigo-400 dark:hover:bg-indigo-500/10"
                 >
-                  {fmt(c.penalty)}
+                  {fmt(c.penaltyNow)}
                 </button>
-                {c.penalty > 0 && (
-                  <p className="mt-1 text-xs text-slate-400">
-                    {`tháng ${prevM}: khách đêm: ${c.prevGuestDates.length ? `${guestSummary(c.prevGuestDates)} (${c.prevNights} đêm)` : c.prevNights}, khách ở trên 5 ngày: ${c.hasGuest ? 1 : 0}, vi phạm: ${c.prevViolations}`}
-                  </p>
-                )}
-                {(dNights(d) > 0 || Number(d.violations) > 0) && (
-                  <p className="mt-1 text-xs text-indigo-500 dark:text-indigo-400">
-                    → thu tháng {nextM}: khách đêm {d.guest_mode === "rieng" ? `${d.guest_dates.length} lượt người-đêm (${dNights(d)} đêm) · 200.000đ/người/đêm` : `${dNights(d)} đêm`}{d.guest_dates.length ? ` (${guestSummary(d.guest_dates)})` : ""} · vi phạm {d.violations} lần = {fmt(guestNightMoney(d.guest_dates, d.guest_mode, Number(d.violations) || 0))}
-                  </p>
-                )}
-                {d.guest && (
-                  <p className="mt-1 text-xs text-indigo-500 dark:text-indigo-400">
-                    → thu tháng {nextM}: khách qua ở + 500k
-                  </p>
+                {c.penaltyNow > 0 && (
+                  <p className="mt-1 text-xs text-slate-400">→ sẽ thu trên phiếu tháng {nextM}</p>
                 )}
               </div>
             </div>
@@ -922,9 +884,122 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
       <p className="mb-3 mt-1 text-xs text-slate-400 dark:text-slate-500">
         Cột &quot;(tháng {prevM})&quot; tính theo dữ liệu tháng {prevM}. Nguyên tắc: tiền phòng thu
         theo tháng hiện tại; nước / wifi+rác / điện / khách đêm / vi phạm của tháng này ở sẽ được thu
-        trên phiếu tháng sau. Dòng &quot;→ thu tháng {nextM}&quot; dưới Tổng là phần tiền ghi nhận
-        tháng này, sẽ xuất hiện trên phiếu tháng {nextM}.
+        trên phiếu tháng sau. Cột &quot;Phụ phí (tháng {m})&quot; là phần tiền ghi nhận trong tháng này,
+        bấm vào để nhập khách đêm / vi phạm / khách qua ở — sẽ xuất hiện trên phiếu tháng {nextM}.
       </p>
+
+      {penView !== null &&
+        (() => {
+          const row = editing[penView];
+          const pd = prevMap.get(row.room) ?? null;
+          if (!pd) return null;
+          const mode = guestModeOf(pd);
+          const nights = guestNightRows(pd.guest_dates, mode);
+          const v = Number(pd.violations) || 0;
+          const q = normGuestDates(pd.guest_dates).length;
+          const g = Number(pd.guest) > 0;
+          const raw = guestNightMoney(pd.guest_dates, mode, v) + (g ? 500000 : 0);
+          const cRow = computed[penView];
+          const noPenalty = cRow.exempted?.includes("penalty");
+          return (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+              onClick={() => setPenView(null)}
+            >
+              <div
+                className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-slate-900"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="mb-1 flex items-start justify-between gap-3">
+                  <h3 className="font-bold text-slate-900 dark:text-slate-100">
+                    Phụ phí tháng {prevM} · Phòng {row.room}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setPenView(null)}
+                    aria-label="Đóng"
+                    className="-mr-1 -mt-1 rounded px-2 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
+                  Đã ghi nhận và thu trên phiếu tháng {m}. Xem để đối chiếu.
+                </p>
+
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 dark:text-slate-400">Khách qua đêm</span>
+                    <span className="font-medium text-slate-800 dark:text-slate-100">
+                      {nights.length > 0 ? `${nights.length} đêm · ${q} người` : "0 đêm"}
+                    </span>
+                  </div>
+
+                  {nights.length > 0 && (
+                    <ul className="space-y-1 rounded-lg bg-slate-50 p-2 text-xs dark:bg-slate-800/60">
+                      {nights.map((nr) => (
+                        <li key={nr.date} className="flex items-start justify-between gap-3">
+                          <span className="text-slate-600 dark:text-slate-300">
+                            <span className="font-semibold">{isoToVi(nr.date)}</span>
+                            {nr.people.length > 0 && (
+                              <span className="text-slate-500 dark:text-slate-400">
+                                {" · "}
+                                {nr.people
+                                  .map((g2) => (g2.name ? `${g2.name}${g2.relation ? ` (${g2.relation})` : ""}` : "—"))
+                                  .join(", ")}
+                              </span>
+                            )}
+                          </span>
+                          <span
+                            className={
+                              nr.fee > 0
+                                ? "shrink-0 font-semibold text-slate-800 dark:text-slate-100"
+                                : "shrink-0 text-emerald-600 dark:text-emerald-400"
+                            }
+                          >
+                            {nr.fee > 0 ? fmt(nr.fee) : "Miễn phí"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 dark:text-slate-400">Khách ở trên 5 ngày</span>
+                    <span className="font-medium text-slate-800 dark:text-slate-100">
+                      {g ? "Có · +500.000đ" : "Không"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 dark:text-slate-400">Vi phạm</span>
+                    <span className="font-medium text-slate-800 dark:text-slate-100">
+                      {v > 0 ? `${v} lần · ${fmt(v * 500000)}` : "Không"}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 flex justify-between border-t border-slate-200 pt-2 font-bold dark:border-slate-700">
+                    <span className="text-slate-900 dark:text-slate-100">
+                      {noPenalty ? "Tổng đã miễn" : "Tổng phụ phí"}
+                    </span>
+                    <span className={noPenalty ? "text-emerald-600 dark:text-emerald-400" : "text-slate-900 dark:text-slate-100"}>
+                      {fmt(cRow.penalty)}
+                    </span>
+                  </div>
+                  {noPenalty && (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                      🎁 Phòng được miễn phụ phí tháng {m} (ghi nhận: {fmt(raw)}).
+                    </p>
+                  )}
+                </div>
+
+                <p className="mt-4 rounded-lg bg-slate-50 p-2.5 text-xs text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+                  Muốn sửa dữ liệu tháng {prevM}, hãy chọn tháng {prevM} ở thanh chọn tháng phía
+                  trên rồi bấm cột &quot;Phụ phí (tháng {prevM})&quot;.
+                </p>
+              </div>
+            </div>
+          );
+        })()}
 
       {pen &&
         (() => {
@@ -993,13 +1068,13 @@ export default function MonthTable({ ky, isCurrent, house, prices, rows, prevRow
                     </div>
                     <div className="space-y-2">
                       <div className="flex gap-2">
-                        <input
-                          type="date"
-                          min={`${ky}-01`}
-                          max={`${ky}-${String(daysInMonth(ky)).padStart(2, "0")}`}
-                          value={pen.picker}
-                          onChange={(e) => setPen({ ...pen, picker: e.target.value })}
+                        <DatePicker
+                          value={isoToVi(pen.picker)}
+                          onChange={(v) => setPen({ ...pen, picker: viToIso(v) ?? "" })}
                           className={inputCls + " w-full"}
+                          ariaLabel="Ngày khách qua đêm"
+                          min={`01/${ky.split("-")[1]}/${ky.split("-")[0]}`}
+                          max={`${String(daysInMonth(ky)).padStart(2, "0")}/${ky.split("-")[1]}/${ky.split("-")[0]}`}
                         />
                         <input
                           type="text"

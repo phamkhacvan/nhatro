@@ -35,17 +35,18 @@ export async function GET(req: NextRequest) {
   const acc = (p.get("acc") || "").slice(0, 24);
   const ref = (p.get("ref") || "P-PREVIEW").normalize("NFC").slice(0, 40);
   const amount = Math.floor(Number(p.get("amount") || "0"));
-  if (!/^\d{6}$/.test(bank) || !/^\d{6,20}$/.test(acc) || !/^[\p{L}\p{M}\p{N}.\-_/\x20]{1,40}$/u.test(ref) || !Number.isFinite(amount) || amount < 0 || amount > 500000000) {
+  if (!/^[A-Za-z0-9]{3,10}$/.test(bank) || !/^\d{6,20}$/.test(acc) || !/^[\p{L}\p{M}\p{N}.\-_/\x20]{1,40}$/u.test(ref) || !Number.isFinite(amount) || amount < 0 || amount > 500000000) {
     return new Response("invalid params", { status: 400 });
   }
 
   const url = `https://img.vietqr.io/image/${bank}-${acc}-compact.png?amount=${amount}&addInfo=${encodeURIComponent(ref)}`;
-  const upstream = await fetch(url, { cache: "force-cache" });
+  const upstream = await fetch(url, { cache: "force-cache", redirect: "follow" });
   if (!upstream.ok) return new Response("qr upstream error", { status: 502 });
   const body = await upstream.arrayBuffer();
+  const contentType = upstream.headers.get("content-type") || "image/svg+xml";
   return new Response(body, {
     headers: {
-      "Content-Type": "image/png",
+      "Content-Type": contentType,
       "X-Content-Type-Options": "nosniff",
       "Cache-Control": "private, max-age=3600",
     },

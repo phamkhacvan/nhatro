@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
   const acc = (p.get("acc") || "").trim().slice(0, 20);
   if (
     !/^[\p{L}\p{M}\p{N}.\-_/\x20]{1,40}$/u.test(ref) ||
-    !/^\d{6}$/.test(bank) ||
+    !/^[A-Za-z0-9]{3,10}$/.test(bank) ||
     !/^\d{6,20}$/.test(acc) ||
     !Number.isFinite(amount) ||
     amount < 0 ||
@@ -49,12 +49,13 @@ export async function GET(req: NextRequest) {
   }
 
   const url = `https://img.vietqr.io/image/${bank}-${acc}-compact.png?amount=${amount}&addInfo=${encodeURIComponent(ref)}`;
-  const upstream = await fetch(url, { cache: "force-cache" });
+  const upstream = await fetch(url, { cache: "force-cache", redirect: "follow" });
   if (!upstream.ok) return new Response("qr upstream error", { status: 502 });
   const body = await upstream.arrayBuffer();
+  const contentType = upstream.headers.get("content-type") || "image/svg+xml";
   return new Response(body, {
     headers: {
-      "Content-Type": "image/png",
+      "Content-Type": contentType,
       "X-Content-Type-Options": "nosniff",
       "Cache-Control": "public, max-age=86400, s-maxage=86400, stale-while-revalidate=86400",
     },

@@ -123,6 +123,9 @@ export type ComputedRow = MonthlyRow & {
   wifi: number;
   elec: number;
   penalty: number;
+  /** Phụ phí ghi nhận trong chính tháng này (khách đêm/vi phạm/khách qua ở)
+   *  -> chưa tính vào tổng tháng này, sẽ thu trên phiếu tháng sau */
+  penaltyNow: number;
   guestFee: number;
   hasGuest: boolean;
   exempted: ("water" | "wifi" | "elec" | "penalty")[];

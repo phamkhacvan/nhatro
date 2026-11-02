@@ -10,7 +10,7 @@ import { STATIC_BANKS, Bank } from "@/lib/banks";
 import { SESSION_COOKIE, signSession } from "@/lib/auth";
 import { getCurrentUser, sessionData, hashPassword, verifyPassword, SessionUser } from "@/lib/auth-server";
 import { House, MonthlyRow, Room, ComputedRow, ContractMeta } from "@/lib/types";
-import { prevKy, nextKy, computeRows, pricesToMap, applyRoomSync, displayKy, fmt, computeRow, vietQrLocalUrl, fmtDateVi, utilNote, exemptLabel } from "@/lib/calc";
+import { prevKy, nextKy, computeRows, pricesToMap, applyRoomSync, displayKy, fmt, computeRow, vietQrLocalUrl, fmtDateVi, utilNote, exemptSummary } from "@/lib/calc";
 
 async function logAudit(houseId: number, entries: { ky?: string; room?: string; field: string; old_val: string; new_val: string }[]) {
   const rows = entries.filter((e) => e.old_val !== e.new_val).map((e) => ({ house_id: houseId, ...e }));
@@ -1382,20 +1382,18 @@ function buildPhieuHtml(house: House, c: ComputedRow, ky: string, baseUrl: strin
     c.prevMoveIn && c.prevMoveIn.slice(0, 7) === prevKy(ky) ? fmtDateVi(c.prevMoveIn) : null;
   const pl = ` (tháng ${displayKy(prevKy(ky))})`;
   const exParts = c.exempted ?? [];
-  const exNote = (p: "water" | "wifi" | "elec" | "penalty") =>
-    exParts.includes(p) ? `🎁 Được miễn phí (ưu đãi)` : "";
   const items: [string, number, string][] = [
     ["Tiền phòng", c.rent, c.rentNote || (c.occupancy > 0 ? `(${c.occupancy} người)` : "")],
-    ["Tiền nước" + pl, c.water, [utilNote(c.prevOcc, c.prevUtilNote, ky, Boolean(c.washing_machine), c.prevUtilGuest), exNote("water")].filter(Boolean).join(" · ")],
-    ["Wifi + Rác" + pl, c.wifi, [utilNote(c.prevOcc, c.prevUtilNote, ky, undefined, c.prevUtilGuest), exNote("wifi")].filter(Boolean).join(" · ")],
-    ["Tiền điện" + pl, c.elec, [c.prevKwh > 0 ? (oDateStr && pDateStr
+    ["Tiền nước" + pl, c.water, utilNote(c.prevOcc, c.prevUtilNote, ky, Boolean(c.washing_machine), c.prevUtilGuest)],
+    ["Wifi + Rác" + pl, c.wifi, utilNote(c.prevOcc, c.prevUtilNote, ky, undefined, c.prevUtilGuest)],
+    ["Tiền điện" + pl, c.elec, c.prevKwh > 0 ? (oDateStr && pDateStr
       ? `Số cũ: ${c.prevOldIndex.toLocaleString("vi-VN")} (${oDateStr}) → Số mới: ${c.prevNewIndex.toLocaleString("vi-VN")} (${pDateStr}) = ${c.prevKwh.toLocaleString("vi-VN")} kWh`
       : `Số cũ: ${c.prevOldIndex.toLocaleString("vi-VN")} → Số mới: ${c.prevNewIndex.toLocaleString("vi-VN")} = ${c.prevKwh.toLocaleString("vi-VN")} kWh${pDateStr ? ` (chốt ngày ${pDateStr})` : ""}`
-    ) : "", exNote("elec")].filter(Boolean).join(" · ")],
+    ) : ""],
     [
       "Phụ phí" + pl,
       c.penalty,
-      [c.penalty > 0 ? `(khách đêm: ${c.prevNights}, vi phạm: ${c.prevViolations})` : "", exNote("penalty")].filter(Boolean).join(" · "),
+      c.penalty > 0 ? `(khách đêm: ${c.prevNights}, vi phạm: ${c.prevViolations})` : "",
     ],
   ];
   const rows = items
@@ -1440,7 +1438,7 @@ function buildPhieuHtml(house: House, c: ComputedRow, ky: string, baseUrl: strin
       <tr><td style="border:1px solid #e2e8f0;padding:8px 12px">Đã thu</td><td style="border:1px solid #e2e8f0;padding:8px 12px;text-align:right;white-space:nowrap">${fmt(c.paid)}</td></tr>
       <tr><td style="border:1px solid #e2e8f0;padding:8px 12px">Còn lại</td><td style="border:1px solid #e2e8f0;padding:8px 12px;text-align:right;white-space:nowrap;font-weight:600">${fmt(c.remain)}</td></tr>
     </table>
-    ${exParts.length > 0 ? `<p style="font-size:12px;color:#15803d;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:8px 10px;margin:10px 0 4px">🎁 Ưu đãi: ${exParts.map((p) => exemptLabel(p)).join(", ")} được miễn phí${c.exempt_from ? ` từ tháng ${displayKy(c.exempt_from)}` : ""}${c.exempt_until ? ` đến tháng ${displayKy(c.exempt_until)}` : ""}</p>` : ""}
+    ${exParts.length > 0 ? `<p style="font-size:12px;color:#15803d;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:8px 10px;margin:10px 0 4px">${esc(exemptSummary(c) ?? "")}</p>` : ""}
     <p style="font-size:13px;margin:12px 0 4px">Hạn thanh toán: ${esc(house.due_text)}</p>
     <p style="font-size:13px;margin:4px 0">Chuyển khoản: ${esc(house.transfer_note)}</p>
     <div style="text-align:center;margin:8px 0">${qrUrl ? `<img src="${esc(qrUrl)}" alt="QR chuyển khoản" width="180" style="width:180px;max-width:180px;height:auto;border:1px solid #e2e8f0;border-radius:8px">` : `<div style="background:#fff7ed;border:1px solid #fdba74;border-radius:8px;padding:10px;color:#9a3412;font-size:13px">⚠ Chưa cấu hình số tài khoản ngân hàng trong Cài đặt. QR chưa hiển thị được số tiền cần chuyển.</div>`}</div>

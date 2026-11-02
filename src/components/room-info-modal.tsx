@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Room } from "@/lib/types";
 import { getRoomInfo, upsertRooms } from "@/app/actions";
-import { isoToVi, viToIso, maskDate, maskMonth, viMonthToKy, kyToViMonth, formatThousand, parseThousand } from "@/lib/calc";
+import { isoToVi, viToIso, maskMonth, viMonthToKy, kyToViMonth, formatThousand, parseThousand } from "@/lib/calc";
+import DatePicker from "@/components/date-picker";
 import { showToast } from "@/components/toast";
 import ContractControl from "@/components/contract-control";
 import { emitRefresh } from "@/lib/refresh";
@@ -267,19 +268,19 @@ const apply = () => {
             </div>
             <div>
               <label className={label}>Ngày vào ở</label>
-              <input type="text" inputMode="numeric" maxLength={10} className={input} value={draft.move_in ?? ""} onChange={(e) => set("move_in", maskDate(e.target.value))} placeholder="dd/mm/yyyy" />
+              <DatePicker className={input} value={draft.move_in ?? ""} onChange={(v) => set("move_in", v)} ariaLabel="Ngày vào ở" />
             </div>
             <div>
               <label className={label}>Đăng ký tạm trú</label>
-              <input type="text" inputMode="numeric" maxLength={10} className={input} value={draft.tam_tru_date ?? ""} onChange={(e) => set("tam_tru_date", maskDate(e.target.value))} placeholder="dd/mm/yyyy" />
+              <DatePicker className={input} value={draft.tam_tru_date ?? ""} onChange={(v) => set("tam_tru_date", v)} ariaLabel="Đăng ký tạm trú" />
             </div>
             <div>
               <label className={label}>Kết thúc HĐ</label>
-              <input type="text" inputMode="numeric" maxLength={10} className={input} value={draft.contract_end ?? ""} onChange={(e) => set("contract_end", maskDate(e.target.value))} placeholder="dd/mm/yyyy" />
+              <DatePicker className={input} value={draft.contract_end ?? ""} onChange={(v) => set("contract_end", v)} ariaLabel="Kết thúc HĐ" />
             </div>
             <div>
               <label className={label}>Ngày nhận cọc</label>
-              <input type="text" inputMode="numeric" maxLength={10} className={input} value={draft.deposit_date ?? ""} onChange={(e) => set("deposit_date", maskDate(e.target.value))} placeholder="dd/mm/yyyy" />
+              <DatePicker className={input} value={draft.deposit_date ?? ""} onChange={(v) => set("deposit_date", v)} ariaLabel="Ngày nhận cọc" />
             </div>
             <div>
               <label className={label}>Tiền cọc (đ)</label>

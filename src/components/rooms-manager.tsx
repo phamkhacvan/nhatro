@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import { Room, ContractMeta, House } from "@/lib/types";
 import { upsertRooms, deleteRoom } from "@/app/actions";
-import { isoToVi, viToIso, maskDate, formatThousand, parseThousand } from "@/lib/calc";
+import { isoToVi, viToIso, formatThousand, parseThousand } from "@/lib/calc";
+import DatePicker from "@/components/date-picker";
 import { showToast } from "@/components/toast";
 import ContractControl from "@/components/contract-control";
 import { emitRefresh } from "@/lib/refresh";
@@ -306,37 +307,28 @@ export default function RoomsManager({
             </div>
             <div>
               <label className={label}>Ngày vào ở</label>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={10}
+              <DatePicker
                 className={input}
                 value={r.move_in ?? ""}
-                onChange={(e) => update(i, "move_in", maskDate(e.target.value))}
-                placeholder="dd/mm/yyyy"
+                onChange={(v) => update(i, "move_in", v)}
+                ariaLabel={`Ngày vào ở phòng ${r.room}`}
               />
             </div>            <div>
               <label className={label}>Kết thúc HĐ</label>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={10}
+              <DatePicker
                 className={input}
                 value={r.contract_end ?? ""}
-                onChange={(e) => update(i, "contract_end", maskDate(e.target.value))}
-                placeholder="dd/mm/yyyy"
+                onChange={(v) => update(i, "contract_end", v)}
+                ariaLabel={`Kết thúc HĐ phòng ${r.room}`}
               />
             </div>
             <div>
               <label className={label}>Hoàn thành ĐKTT</label>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={10}
+              <DatePicker
                 className={input}
                 value={r.tam_tru_date ?? ""}
-                onChange={(e) => update(i, "tam_tru_date", maskDate(e.target.value))}
-                placeholder="dd/mm/yyyy"
+                onChange={(v) => update(i, "tam_tru_date", v)}
+                ariaLabel={`Hoàn thành ĐKTT phòng ${r.room}`}
               />
             </div>
             <div>
@@ -352,14 +344,11 @@ export default function RoomsManager({
             </div>
             <div>
               <label className={label}>Ngày nhận cọc</label>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={10}
+              <DatePicker
                 className={input}
                 value={r.deposit_date ?? ""}
-                onChange={(e) => update(i, "deposit_date", maskDate(e.target.value))}
-                placeholder="dd/mm/yyyy"
+                onChange={(v) => update(i, "deposit_date", v)}
+                ariaLabel={`Ngày nhận cọc phòng ${r.room}`}
               />
             </div>
             <div>

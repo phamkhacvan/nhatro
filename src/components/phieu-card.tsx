@@ -138,7 +138,7 @@ export default function PhieuCard({
             <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 text-[12px] sm:mt-4 sm:text-[13px]">
               <div className="flex items-center justify-between border-b border-slate-200 bg-indigo-50/70 px-3 py-1.5">
                 <span className="font-bold text-slate-800">
-                  Khách qua đêm · chi tiết từng đêm
+                  Diễn giải chi tiết phụ phí - khách qua đêm
                 </span>
                 <span className="font-semibold tabular-nums text-indigo-700">
                   {c.prevGuestMode === "rieng" ? "200.000đ/người/đêm" : ""}

@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { getActiveHouse } from "@/app/actions";
 import { sb } from "@/lib/supabase";
 import { MonthlyRow, Room } from "@/lib/types";
-import { computeRow, fmt, pricesToMap, displayKy, applyRoomSync, prevKy, vietQrLocalUrl, fmtDateVi, utilNote, exemptLabel } from "@/lib/calc";
+import { computeRow, fmt, pricesToMap, displayKy, applyRoomSync, prevKy, vietQrLocalUrl, fmtDateVi, utilNote, exemptSummary } from "@/lib/calc";
 import PhieuActions from "@/components/phieu-actions";
 import PhieuCard from "@/components/phieu-card";
 
@@ -39,27 +39,24 @@ export default async function PhieuPage({
         : `Số cũ: ${c.prevOldIndex.toLocaleString("vi-VN")} → Số mới: ${c.prevNewIndex.toLocaleString("vi-VN")} = ${c.prevKwh.toLocaleString("vi-VN")} kWh${pDateStr ? ` (chốt ngày ${pDateStr})` : ""}`
       : "";
   const pl = ` (tháng ${displayKy(prevKy(ky))})`;
-  const exParts = c.exempted ?? [];
-  const exNote = (p: "water" | "wifi" | "elec" | "penalty") =>
-    exParts.includes(p) ? "🎁 Được miễn phí (ưu đãi)" : "";
 
   const items = [
     { label: "Tiền phòng", value: fmt(c.rent), note: c.rentNote || (c.occupancy > 0 ? `(${c.occupancy} người)` : "") },
     {
       label: "Tiền nước" + pl,
       value: fmt(c.water),
-      note: [utilNote(c.prevOcc, c.prevUtilNote, ky, Boolean(c.washing_machine), c.prevUtilGuest), exNote("water")].filter(Boolean).join(" · "),
+      note: utilNote(c.prevOcc, c.prevUtilNote, ky, Boolean(c.washing_machine), c.prevUtilGuest),
     },
     {
       label: "Wifi + Rác" + pl,
       value: fmt(c.wifi),
-      note: [utilNote(c.prevOcc, c.prevUtilNote, ky, undefined, c.prevUtilGuest), exNote("wifi")].filter(Boolean).join(" · "),
+      note: utilNote(c.prevOcc, c.prevUtilNote, ky, undefined, c.prevUtilGuest),
     },
-    { label: "Tiền điện" + pl, value: fmt(c.elec), note: [elecNote, exNote("elec")].filter(Boolean).join(" · ") },
+    { label: "Tiền điện" + pl, value: fmt(c.elec), note: elecNote },
     {
       label: "Phụ phí" + pl,
       value: fmt(c.penalty),
-      note: [
+      note:
         c.penalty > 0
           ? `(${[
               c.prevGuestDates.length ? `${c.prevNights} đêm khách qua đêm${c.prevGuestMode === "rieng" ? ` × ${c.prevGuestPeople} người (riêng)` : ""}` : "",
@@ -69,17 +66,11 @@ export default async function PhieuPage({
               .filter(Boolean)
               .join(" · ")})`
           : "",
-        exNote("penalty"),
-      ]
-        .filter(Boolean)
-        .join(" · "),
     },
   ];
 
-  const exSummary =
-    exParts.length > 0
-      ? `🎁 Ưu đãi: ${exParts.map(exemptLabel).join(", ")} được miễn phí${c.exempt_from ? ` từ tháng ${displayKy(c.exempt_from)}` : ""}${c.exempt_until ? ` đến tháng ${displayKy(c.exempt_until)}` : ""}`
-      : null;
+  // Ghi chú ưu đãi tổng hợp ở cuối phiếu (không lặp lại ở từng dòng)
+  const exSummary = exemptSummary(c);
 
   const qrUrl =
     house.bank_code && house.bank_account
